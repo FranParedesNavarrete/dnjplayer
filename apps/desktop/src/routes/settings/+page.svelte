@@ -5,6 +5,7 @@
 	import { language } from '$lib/stores/settings';
 	import { isConnected, userEmail } from '$lib/stores/mega';
 	import { megaCheckStatus } from '$lib/services/mega-service';
+	import { t } from '$lib/i18n';
 
 	onMount(() => {
 		// Refresh Mega connection status when visiting settings
@@ -22,29 +23,29 @@
 
 <div class="settings-page">
 	<div class="page-header">
-		<h2>Settings</h2>
+		<h2>{$t['settings.title']}</h2>
 	</div>
 
 	<div class="settings-sections">
 		<section class="settings-section">
 			<div class="section-title">
 				<Palette size={18} strokeWidth={1.8} />
-				<h3>Appearance</h3>
+				<h3>{$t['settings.appearance']}</h3>
 			</div>
 			<div class="setting-row">
-				<span class="setting-label">Theme</span>
+				<span class="setting-label">{$t['settings.theme']}</span>
 				<button class="theme-toggle" onclick={() => theme.toggle()}>
 					{#if $theme === 'dark'}
 						<Moon size={16} strokeWidth={2} />
-						<span>Dark</span>
+						<span>{$t['settings.dark']}</span>
 					{:else}
 						<Sun size={16} strokeWidth={2} />
-						<span>Light</span>
+						<span>{$t['settings.light']}</span>
 					{/if}
 				</button>
 			</div>
 			<div class="setting-row">
-				<span class="setting-label">Language</span>
+				<span class="setting-label">{$t['settings.language']}</span>
 				<select class="setting-select" value={$language} onchange={handleLanguageChange}>
 					<option value="en">English</option>
 					<option value="es">Español</option>
@@ -55,43 +56,43 @@
 		<section class="settings-section">
 			<div class="section-title">
 				<Link size={18} strokeWidth={1.8} />
-				<h3>Connectors</h3>
+				<h3>{$t['settings.connectors']}</h3>
 			</div>
 			<div class="setting-row">
 				<div class="connector-info">
 					<span class="connector-name">Mega.io</span>
 				</div>
 				{#if $isConnected}
-					<span class="setting-value connected">{$userEmail ?? 'Connected'}</span>
+					<span class="setting-value connected">{$userEmail ?? $t['settings.connected']}</span>
 				{:else}
-					<span class="setting-value disconnected">Not connected</span>
+					<span class="setting-value disconnected">{$t['settings.notConnected']}</span>
 				{/if}
 			</div>
 			<div class="setting-row">
 				<div class="connector-info">
 					<span class="connector-name">Google Drive</span>
 				</div>
-				<span class="badge coming-soon">Coming soon</span>
+				<span class="badge coming-soon">{$t['settings.comingSoon']}</span>
 			</div>
 			<div class="setting-row">
 				<div class="connector-info">
 					<span class="connector-name">Dropbox</span>
 				</div>
-				<span class="badge coming-soon">Coming soon</span>
+				<span class="badge coming-soon">{$t['settings.comingSoon']}</span>
 			</div>
 		</section>
 
 		<section class="settings-section">
 			<div class="section-title">
 				<Cloud size={18} strokeWidth={1.8} />
-				<h3>Mega Account</h3>
+				<h3>{$t['settings.megaAccount']}</h3>
 			</div>
 			<div class="setting-row">
-				<span class="setting-label">Status</span>
+				<span class="setting-label">{$t['settings.status']}</span>
 				{#if $isConnected}
-					<span class="setting-value connected">{$userEmail ?? 'Connected'}</span>
+					<span class="setting-value connected">{$userEmail ?? $t['settings.connected']}</span>
 				{:else}
-					<span class="setting-value disconnected">Not connected</span>
+					<span class="setting-value disconnected">{$t['settings.notConnected']}</span>
 				{/if}
 			</div>
 		</section>
@@ -99,24 +100,24 @@
 		<section class="settings-section">
 			<div class="section-title">
 				<Sparkles size={18} strokeWidth={1.8} />
-				<h3>Anime4K</h3>
+				<h3>{$t['settings.anime4k']}</h3>
 			</div>
 			<div class="setting-row">
-				<span class="setting-label">Default shader mode</span>
+				<span class="setting-label">{$t['settings.shaderMode']}</span>
 				<select class="setting-select">
-					<option value="A">Mode A (1080p)</option>
-					<option value="B">Mode B (720p)</option>
-					<option value="C">Mode C (480p)</option>
-					<option value="off">Off</option>
+					<option value="A">{$t['settings.modeA']}</option>
+					<option value="B">{$t['settings.modeB']}</option>
+					<option value="C">{$t['settings.modeC']}</option>
+					<option value="off">{$t['settings.modeOff']}</option>
 				</select>
 			</div>
 			<div class="setting-row">
-				<span class="setting-label">Shader variant</span>
+				<span class="setting-label">{$t['settings.shaderVariant']}</span>
 				<select class="setting-select">
-					<option value="VL">Very Large (best quality)</option>
-					<option value="L">Large</option>
-					<option value="M">Medium (balanced)</option>
-					<option value="S">Small (performance)</option>
+					<option value="VL">{$t['settings.variantVL']}</option>
+					<option value="L">{$t['settings.variantL']}</option>
+					<option value="M">{$t['settings.variantM']}</option>
+					<option value="S">{$t['settings.variantS']}</option>
 				</select>
 			</div>
 		</section>

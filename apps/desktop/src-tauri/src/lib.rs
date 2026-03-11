@@ -2,7 +2,13 @@ mod commands;
 mod mega;
 mod pipeline;
 
+use std::sync::Mutex;
 use tauri_plugin_sql::{Migration, MigrationKind};
+
+/// Stores the mpv window handle (HWND on Windows) between attach and resize calls.
+pub struct MpvWindowState {
+    pub hwnd: Mutex<Option<isize>>,
+}
 
 pub fn run() {
     let migrations = vec![
@@ -21,6 +27,9 @@ pub fn run() {
     ];
 
     tauri::Builder::default()
+        .manage(MpvWindowState {
+            hwnd: Mutex::new(None),
+        })
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:dnjplayer.db", migrations)

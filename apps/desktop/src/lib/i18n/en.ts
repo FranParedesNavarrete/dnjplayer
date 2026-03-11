@@ -1,0 +1,96 @@
+export const en: Record<string, string> = {
+	// Navigation
+	'nav.library': 'Library',
+	'nav.browse': 'Browse Mega',
+	'nav.player': 'Player',
+	'nav.queue': 'Queue',
+	'nav.settings': 'Settings',
+
+	// Status
+	'status.connected': 'Connected',
+	'status.notConnected': 'Not connected',
+
+	// Library page
+	'library.title': 'Library',
+	'library.subtitle': 'Your recently played and pre-processed content',
+	'library.empty': 'No content yet',
+	'library.emptyHint': 'Browse your Mega storage and play a video to get started.',
+	'library.browseMega': 'Browse Mega',
+
+	// Browse page
+	'browse.title': 'Browse Mega',
+	'browse.subtitle': 'Navigate your Mega cloud storage',
+	'browse.signOut': 'Sign Out',
+	'browse.checking': 'Checking connection...',
+
+	// Auth
+	'auth.title': 'Sign in to Mega',
+	'auth.subtitle': 'Enter your Mega.io credentials to access your files.',
+	'auth.email': 'Email',
+	'auth.password': 'Password',
+	'auth.signIn': 'Sign In',
+	'auth.connecting': 'Connecting...',
+	'auth.required': 'Email and password are required',
+	'auth.megacmdNote': 'Requires MEGAcmd installed on your system.',
+
+	// File Browser
+	'browser.cloudDrive': 'Cloud Drive',
+	'browser.sharedItems': 'Shared Items',
+	'browser.sharedWith': 'Shared with you',
+	'browser.filter': 'Filter files...',
+	'browser.loading': 'Loading...',
+	'browser.noShared': 'No shared items found.',
+	'browser.noFiles': 'No files found in this directory.',
+	'browser.goUp': 'Go up',
+	'browser.play': 'Play',
+
+	// Player
+	'player.placeholder': 'Select a video from Browse to start playing',
+	'player.rewind': 'Rewind 10s',
+	'player.forward': 'Forward 10s',
+	'player.play': 'Play',
+	'player.pause': 'Pause',
+	'player.stop': 'Stop',
+	'player.subsOff': 'Subs Off',
+	'player.subtitles': 'Subtitles',
+	'player.mute': 'Mute',
+	'player.unmute': 'Unmute',
+	'player.fullscreen': 'Fullscreen (F)',
+	'player.exitFullscreen': 'Exit fullscreen (F)',
+	'player.adjustments': 'Video adjustments',
+	'player.brightness': 'Brightness',
+	'player.contrast': 'Contrast',
+	'player.saturation': 'Saturation',
+	'player.reset': 'Reset',
+
+	// Queue page
+	'queue.title': 'Processing Queue',
+	'queue.subtitle': 'Anime4K pre-processing jobs',
+	'queue.empty': 'No jobs in queue',
+	'queue.emptyHint': 'Queue videos for Anime4K pre-processing from the file browser.',
+
+	// Settings page
+	'settings.title': 'Settings',
+	'settings.appearance': 'Appearance',
+	'settings.theme': 'Theme',
+	'settings.dark': 'Dark',
+	'settings.light': 'Light',
+	'settings.language': 'Language',
+	'settings.connectors': 'Connectors',
+	'settings.comingSoon': 'Coming soon',
+	'settings.megaAccount': 'Mega Account',
+	'settings.status': 'Status',
+	'settings.connected': 'Connected',
+	'settings.notConnected': 'Not connected',
+	'settings.anime4k': 'Anime4K',
+	'settings.shaderMode': 'Default shader mode',
+	'settings.shaderVariant': 'Shader variant',
+	'settings.modeA': 'Mode A (1080p)',
+	'settings.modeB': 'Mode B (720p)',
+	'settings.modeC': 'Mode C (480p)',
+	'settings.modeOff': 'Off',
+	'settings.variantVL': 'Very Large (best quality)',
+	'settings.variantL': 'Large',
+	'settings.variantM': 'Medium (balanced)',
+	'settings.variantS': 'Small (performance)',
+};

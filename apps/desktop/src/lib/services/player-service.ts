@@ -20,7 +20,12 @@ import {
 	volume,
 	speed,
 	subtitleTracks,
-	currentSubtitleId
+	currentSubtitleId,
+	brightness,
+	contrast,
+	saturation,
+	gamma,
+	hue
 } from '$lib/stores/player';
 import { playerActive, currentVideoUrl, currentVideoTitle } from '$lib/stores/player-ui';
 import type { VideoAdjustments, ShaderMode } from '$lib/types/player';
@@ -37,6 +42,9 @@ const OBSERVED_PROPERTIES = [
 	['speed', 'double', 'none'],
 ] as const satisfies MpvObservableProperty[];
 
+const isMacOS = navigator.platform?.toLowerCase().includes('mac') ?? false;
+const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
+
 const MPV_CONFIG: MpvConfig = {
 	initialOptions: {
 		'hwdec': 'auto-safe',
@@ -44,6 +52,10 @@ const MPV_CONFIG: MpvConfig = {
 		'osc': 'no',
 		'input-default-bindings': 'no',
 		'input-vo-keyboard': 'no',
+		// On Windows, prevent the plugin from injecting --wid (which embeds mpv inside WebView2,
+		// causing the video to be hidden behind the opaque webview). Instead, let mpv create its
+		// own window and we'll reparent it as a child window via Win32 API.
+		...(isWindows ? { 'wid': '', 'force-window': 'yes' } : {}),
 	},
 	observedProperties: OBSERVED_PROPERTIES,
 };
@@ -51,7 +63,6 @@ const MPV_CONFIG: MpvConfig = {
 let unlistenProperties: (() => void) | null = null;
 let initialized = false;
 let mpvWindowAttached = false;
-const isMacOS = navigator.platform?.toLowerCase().includes('mac') ?? false;
 
 /**
  * Initialize mpv player and start observing properties.
@@ -119,8 +130,8 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 	currentVideoTitle.set(title ?? null);
 	playerActive.set(true);
 
-	// On macOS, mpv creates a separate window. Attach it as a child of the Tauri window.
-	if (isMacOS && !mpvWindowAttached) {
+	// On macOS/Windows, mpv creates a separate window. Attach it as a child of the Tauri window.
+	if ((isMacOS || isWindows) && !mpvWindowAttached) {
 		// Wait for mpv to create its window
 		await new Promise((r) => setTimeout(r, 500));
 		try {
@@ -144,7 +155,7 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
  * Called by Player.svelte's ResizeObserver when the video area changes.
  */
 export async function resizeMpvOverlay(x: number, y: number, width: number, height: number): Promise<void> {
-	if (!isMacOS || !mpvWindowAttached) return;
+	if (!(isMacOS || isWindows) || !mpvWindowAttached) return;
 	try {
 		await invoke('resize_mpv_window', { x, y, width, height });
 	} catch (e) {
@@ -234,9 +245,18 @@ export async function setMute(muted: boolean): Promise<void> {
 
 // --- Video adjustments ---
 
+const adjustmentStores: Record<string, typeof brightness> = {
+	brightness,
+	contrast,
+	saturation,
+	gamma,
+	hue,
+};
+
 export async function setVideoAdjustment(property: string, value: number): Promise<void> {
 	if (!initialized) return;
 	await setProperty(property, value);
+	adjustmentStores[property]?.set(value);
 }
 
 export async function resetVideoAdjustments(): Promise<void> {

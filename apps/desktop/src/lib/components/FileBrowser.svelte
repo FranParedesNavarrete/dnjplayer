@@ -6,14 +6,15 @@
 	import type { MegaEntry } from '$lib/types/mega';
 	import type { MegaShare } from '$lib/types/mega';
 	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users } from 'lucide-svelte';
+	import { t } from '$lib/i18n';
 
 	const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.webm', '.mov', '.flv', '.wmv', '.m4v', '.ts'];
 
 	type SectionId = 'cloud' | 'shared';
 
-	const SECTIONS: { id: SectionId; label: string; icon: typeof HardDrive }[] = [
-		{ id: 'cloud', label: 'Cloud Drive', icon: HardDrive },
-		{ id: 'shared', label: 'Shared Items', icon: Users },
+	const SECTIONS: { id: SectionId; labelKey: string; icon: typeof HardDrive }[] = [
+		{ id: 'cloud', labelKey: 'browser.cloudDrive', icon: HardDrive },
+		{ id: 'shared', labelKey: 'browser.sharedItems', icon: Users },
 	];
 
 	let searchQuery = $state('');
@@ -154,7 +155,7 @@
 				onclick={() => switchTab(section.id)}
 			>
 				<section.icon size={14} strokeWidth={1.8} />
-				<span>{section.label}</span>
+				<span>{$t[section.labelKey]}</span>
 			</button>
 		{/each}
 	</div>
@@ -165,13 +166,13 @@
 				class="btn-icon"
 				onclick={navigateUp}
 				disabled={activeTab === 'cloud' && $currentPath === '/' && !isInsideShare}
-				title="Go up"
+				title={$t['browser.goUp']}
 			>
 				<ArrowUp size={16} strokeWidth={2} />
 			</button>
 			<span class="current-path">
 				{#if activeTab === 'shared' && !isInsideShare}
-					Shared with you
+					{$t['browser.sharedWith']}
 				{:else}
 					{$currentPath}
 				{/if}
@@ -181,7 +182,7 @@
 			<span class="search-icon-wrap"><Search size={14} strokeWidth={2} /></span>
 			<input
 				type="text"
-				placeholder="Filter files..."
+				placeholder={$t['browser.filter']}
 				bind:value={searchQuery}
 			/>
 		</div>
@@ -194,13 +195,13 @@
 	{#if $isLoading}
 		<div class="loading-state">
 			<span class="spinner"></span>
-			<span>Loading...</span>
+			<span>{$t['browser.loading']}</span>
 		</div>
 	{:else if activeTab === 'shared' && !isInsideShare}
 		<!-- Shares list view -->
 		{#if shares.length === 0}
 			<div class="empty-state">
-				<p>No shared items found.</p>
+				<p>{$t['browser.noShared']}</p>
 			</div>
 		{:else}
 			<div class="file-list">
@@ -221,7 +222,7 @@
 		{/if}
 	{:else if filteredEntries.length === 0}
 		<div class="empty-state">
-			<p>No files found in this directory.</p>
+			<p>{$t['browser.noFiles']}</p>
 		</div>
 	{:else}
 		<div class="file-list">
@@ -261,7 +262,7 @@
 					<span class="entry-name">{entry.name}</span>
 					<span class="entry-size">{entry.size}</span>
 					{#if isVideo(entry.name)}
-						<span class="play-badge">Play</span>
+						<span class="play-badge">{$t['browser.play']}</span>
 					{/if}
 				</button>
 			{/each}

@@ -6,6 +6,7 @@
 	import { theme } from '$lib/stores/theme';
 	import { megaCheckStatus } from '$lib/services/mega-service';
 	import { page } from '$app/stores';
+	import { t } from '$lib/i18n';
 	import { Library, CloudDownload, Zap, Settings, Play, Sun, Moon } from 'lucide-svelte';
 
 	let { children } = $props();
@@ -22,11 +23,11 @@
 	});
 
 	const navItems = [
-		{ href: '/', label: 'Library', icon: Library },
-		{ href: '/browse', label: 'Browse Mega', icon: CloudDownload },
-		{ href: '/player', label: 'Player', icon: Play },
-		{ href: '/queue', label: 'Queue', icon: Zap },
-		{ href: '/settings', label: 'Settings', icon: Settings },
+		{ href: '/', labelKey: 'nav.library', icon: Library },
+		{ href: '/browse', labelKey: 'nav.browse', icon: CloudDownload },
+		{ href: '/player', labelKey: 'nav.player', icon: Play },
+		{ href: '/queue', labelKey: 'nav.queue', icon: Zap },
+		{ href: '/settings', labelKey: 'nav.settings', icon: Settings },
 	];
 </script>
 
@@ -50,7 +51,7 @@
 						<span class="nav-icon">
 							<item.icon size={18} strokeWidth={1.8} />
 						</span>
-						<span class="nav-label">{item.label}</span>
+						<span class="nav-label">{$t[item.labelKey]}</span>
 					</a>
 				</li>
 			{/each}
@@ -66,9 +67,9 @@
 			<div class="connection-status">
 				<span class="status-dot" class:online={$isConnected} class:offline={!$isConnected}></span>
 				{#if $isConnected}
-					<span class="status-text">{$userEmail ?? 'Connected'}</span>
+					<span class="status-text">{$userEmail ?? $t['status.connected']}</span>
 				{:else}
-					<span class="status-text">Not connected</span>
+					<span class="status-text">{$t['status.notConnected']}</span>
 				{/if}
 			</div>
 		</div>

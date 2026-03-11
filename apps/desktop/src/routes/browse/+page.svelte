@@ -4,6 +4,7 @@
 	import { isConnected, userEmail, megaError } from '$lib/stores/mega';
 	import AuthForm from '$lib/components/AuthForm.svelte';
 	import FileBrowser from '$lib/components/FileBrowser.svelte';
+	import { t } from '$lib/i18n';
 
 	let checkingStatus = $state(true);
 
@@ -33,13 +34,13 @@
 <div class="browse-page">
 	<div class="page-header">
 		<div class="header-left">
-			<h2>Browse Mega</h2>
-			<p class="subtitle">Navigate your Mega cloud storage</p>
+			<h2>{$t['browse.title']}</h2>
+			<p class="subtitle">{$t['browse.subtitle']}</p>
 		</div>
 		{#if $isConnected}
 			<div class="header-right">
 				<span class="user-email">{$userEmail}</span>
-				<button class="btn-secondary" onclick={handleLogout}>Sign Out</button>
+				<button class="btn-secondary" onclick={handleLogout}>{$t['browse.signOut']}</button>
 			</div>
 		{/if}
 	</div>
@@ -47,7 +48,7 @@
 	{#if checkingStatus}
 		<div class="loading-state">
 			<span class="spinner"></span>
-			<span>Checking connection...</span>
+			<span>{$t['browse.checking']}</span>
 		</div>
 	{:else if $isConnected}
 		<FileBrowser />

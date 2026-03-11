@@ -2,6 +2,7 @@
 	import { megaLogin, megaCheckStatus } from '$lib/services/mega-service';
 	import { isConnected, userEmail, megaError } from '$lib/stores/mega';
 	import { Lock } from 'lucide-svelte';
+	import { t } from '$lib/i18n';
 
 	let email = $state('');
 	let password = $state('');
@@ -10,7 +11,7 @@
 
 	async function handleLogin() {
 		if (!email || !password) {
-			errorMsg = 'Email and password are required';
+			errorMsg = $t['auth.required'];
 			return;
 		}
 		loading = true;
@@ -41,8 +42,8 @@
 		<div class="auth-icon">
 			<Lock size={40} strokeWidth={1.4} />
 		</div>
-		<h3>Sign in to Mega</h3>
-		<p>Enter your Mega.io credentials to access your files.</p>
+		<h3>{$t['auth.title']}</h3>
+		<p>{$t['auth.subtitle']}</p>
 	</div>
 
 	{#if errorMsg}
@@ -51,7 +52,7 @@
 
 	<div class="form-fields">
 		<div class="field">
-			<label for="mega-email">Email</label>
+			<label for="mega-email">{$t['auth.email']}</label>
 			<input
 				id="mega-email"
 				type="email"
@@ -62,12 +63,12 @@
 			/>
 		</div>
 		<div class="field">
-			<label for="mega-password">Password</label>
+			<label for="mega-password">{$t['auth.password']}</label>
 			<input
 				id="mega-password"
 				type="password"
 				bind:value={password}
-				placeholder="Password"
+				placeholder={$t['auth.password']}
 				disabled={loading}
 				onkeydown={handleKeydown}
 			/>
@@ -76,14 +77,14 @@
 
 	<button class="btn-primary" onclick={handleLogin} disabled={loading}>
 		{#if loading}
-			Connecting...
+			{$t['auth.connecting']}
 		{:else}
-			Sign In
+			{$t['auth.signIn']}
 		{/if}
 	</button>
 
 	<p class="auth-note">
-		Requires <a href="https://mega.io/cmd" target="_blank" rel="noopener">MEGAcmd</a> installed on your system.
+		{$t['auth.megacmdNote']}
 	</p>
 </div>
 

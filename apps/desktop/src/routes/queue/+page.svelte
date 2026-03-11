@@ -1,19 +1,20 @@
 <script lang="ts">
 	import { Layers } from 'lucide-svelte';
+	import { t } from '$lib/i18n';
 </script>
 
 <div class="queue-page">
 	<div class="page-header">
-		<h2>Processing Queue</h2>
-		<p class="subtitle">Anime4K pre-processing jobs</p>
+		<h2>{$t['queue.title']}</h2>
+		<p class="subtitle">{$t['queue.subtitle']}</p>
 	</div>
 
 	<div class="empty-state">
 		<div class="empty-icon">
 			<Layers size={48} strokeWidth={1.2} />
 		</div>
-		<h3>No jobs in queue</h3>
-		<p>Queue videos for Anime4K pre-processing from the file browser.</p>
+		<h3>{$t['queue.empty']}</h3>
+		<p>{$t['queue.emptyHint']}</p>
 	</div>
 </div>
 

@@ -1,0 +1,96 @@
+export const es: Record<string, string> = {
+	// Navegacion
+	'nav.library': 'Biblioteca',
+	'nav.browse': 'Explorar Mega',
+	'nav.player': 'Reproductor',
+	'nav.queue': 'Cola',
+	'nav.settings': 'Ajustes',
+
+	// Estado
+	'status.connected': 'Conectado',
+	'status.notConnected': 'No conectado',
+
+	// Pagina Biblioteca
+	'library.title': 'Biblioteca',
+	'library.subtitle': 'Tu contenido reproducido y pre-procesado recientemente',
+	'library.empty': 'Sin contenido',
+	'library.emptyHint': 'Explora tu almacenamiento Mega y reproduce un video para empezar.',
+	'library.browseMega': 'Explorar Mega',
+
+	// Pagina Explorar
+	'browse.title': 'Explorar Mega',
+	'browse.subtitle': 'Navega tu almacenamiento en la nube de Mega',
+	'browse.signOut': 'Cerrar sesion',
+	'browse.checking': 'Comprobando conexion...',
+
+	// Autenticacion
+	'auth.title': 'Iniciar sesion en Mega',
+	'auth.subtitle': 'Introduce tus credenciales de Mega.io para acceder a tus archivos.',
+	'auth.email': 'Correo electronico',
+	'auth.password': 'Contrasena',
+	'auth.signIn': 'Iniciar sesion',
+	'auth.connecting': 'Conectando...',
+	'auth.required': 'El correo y la contrasena son obligatorios',
+	'auth.megacmdNote': 'Requiere MEGAcmd instalado en tu sistema.',
+
+	// Explorador de archivos
+	'browser.cloudDrive': 'Nube',
+	'browser.sharedItems': 'Compartidos',
+	'browser.sharedWith': 'Compartido contigo',
+	'browser.filter': 'Filtrar archivos...',
+	'browser.loading': 'Cargando...',
+	'browser.noShared': 'No se encontraron elementos compartidos.',
+	'browser.noFiles': 'No se encontraron archivos en este directorio.',
+	'browser.goUp': 'Subir',
+	'browser.play': 'Reproducir',
+
+	// Reproductor
+	'player.placeholder': 'Selecciona un video desde Explorar para empezar a reproducir',
+	'player.rewind': 'Retroceder 10s',
+	'player.forward': 'Avanzar 10s',
+	'player.play': 'Reproducir',
+	'player.pause': 'Pausar',
+	'player.stop': 'Detener',
+	'player.subsOff': 'Sin subs',
+	'player.subtitles': 'Subtitulos',
+	'player.mute': 'Silenciar',
+	'player.unmute': 'Activar sonido',
+	'player.fullscreen': 'Pantalla completa (F)',
+	'player.exitFullscreen': 'Salir de pantalla completa (F)',
+	'player.adjustments': 'Ajustes de video',
+	'player.brightness': 'Brillo',
+	'player.contrast': 'Contraste',
+	'player.saturation': 'Saturacion',
+	'player.reset': 'Restablecer',
+
+	// Pagina Cola
+	'queue.title': 'Cola de procesamiento',
+	'queue.subtitle': 'Trabajos de pre-procesamiento Anime4K',
+	'queue.empty': 'No hay trabajos en cola',
+	'queue.emptyHint': 'Encola videos para pre-procesamiento Anime4K desde el explorador de archivos.',
+
+	// Pagina Ajustes
+	'settings.title': 'Ajustes',
+	'settings.appearance': 'Apariencia',
+	'settings.theme': 'Tema',
+	'settings.dark': 'Oscuro',
+	'settings.light': 'Claro',
+	'settings.language': 'Idioma',
+	'settings.connectors': 'Conectores',
+	'settings.comingSoon': 'Proximamente',
+	'settings.megaAccount': 'Cuenta Mega',
+	'settings.status': 'Estado',
+	'settings.connected': 'Conectado',
+	'settings.notConnected': 'No conectado',
+	'settings.anime4k': 'Anime4K',
+	'settings.shaderMode': 'Modo de shader predeterminado',
+	'settings.shaderVariant': 'Variante de shader',
+	'settings.modeA': 'Modo A (1080p)',
+	'settings.modeB': 'Modo B (720p)',
+	'settings.modeC': 'Modo C (480p)',
+	'settings.modeOff': 'Desactivado',
+	'settings.variantVL': 'Muy grande (mejor calidad)',
+	'settings.variantL': 'Grande',
+	'settings.variantM': 'Medio (equilibrado)',
+	'settings.variantS': 'Pequeno (rendimiento)',
+};

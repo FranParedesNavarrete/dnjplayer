@@ -8,7 +8,10 @@
 		progress,
 		filename,
 		subtitleTracks,
-		currentSubtitleId
+		currentSubtitleId,
+		brightness,
+		contrast,
+		saturation
 	} from '$lib/stores/player';
 	import { currentVideoTitle, showControls } from '$lib/stores/player-ui';
 	import {
@@ -20,7 +23,9 @@
 		setMute,
 		stopVideo,
 		toggleFullscreen,
-		setSubtitleTrack
+		setSubtitleTrack,
+		setVideoAdjustment,
+		resetVideoAdjustments
 	} from '$lib/services/player-service';
 	import {
 		Play,
@@ -32,11 +37,14 @@
 		Square,
 		Maximize,
 		Minimize,
-		Captions
+		Captions,
+		SlidersHorizontal
 	} from 'lucide-svelte';
+	import { t } from '$lib/i18n';
 
 	let isMuted = $state(false);
 	let isFs = $state(false);
+	let showAdjustments = $state(false);
 	let hideTimer: ReturnType<typeof setTimeout> | null = null;
 	let controlsVisible = $state(true);
 
@@ -171,20 +179,20 @@
 		<!-- Button row -->
 		<div class="button-row">
 			<div class="left-controls">
-				<button class="ctrl-btn" onclick={() => seek(-10)} title="Rewind 10s">
+				<button class="ctrl-btn" onclick={() => seek(-10)} title={$t['player.rewind']}>
 					<SkipBack size={18} strokeWidth={2} />
 				</button>
-				<button class="ctrl-btn play-btn" onclick={togglePause} title={$isPaused ? 'Play' : 'Pause'}>
+				<button class="ctrl-btn play-btn" onclick={togglePause} title={$isPaused ? $t['player.play'] : $t['player.pause']}>
 					{#if $isPaused}
 						<Play size={22} strokeWidth={2} />
 					{:else}
 						<Pause size={22} strokeWidth={2} />
 					{/if}
 				</button>
-				<button class="ctrl-btn" onclick={() => seek(10)} title="Forward 10s">
+				<button class="ctrl-btn" onclick={() => seek(10)} title={$t['player.forward']}>
 					<SkipForward size={18} strokeWidth={2} />
 				</button>
-				<button class="ctrl-btn" onclick={handleStop} title="Stop">
+				<button class="ctrl-btn" onclick={handleStop} title={$t['player.stop']}>
 					<Square size={16} strokeWidth={2} />
 				</button>
 			</div>
@@ -192,8 +200,8 @@
 			<div class="right-controls">
 				<!-- Subtitles -->
 				{#if $subtitleTracks.length > 0}
-					<select class="subtitle-select" value={String($currentSubtitleId)} onchange={handleSubtitleChange} title="Subtitles">
-						<option value="0">Subs Off</option>
+					<select class="subtitle-select" value={String($currentSubtitleId)} onchange={handleSubtitleChange} title={$t['player.subtitles']}>
+						<option value="0">{$t['player.subsOff']}</option>
 						{#each $subtitleTracks as track}
 							<option value={String(track.id)}>{track.title || track.lang || `Track ${track.id}`}</option>
 						{/each}
@@ -212,7 +220,7 @@
 				</select>
 
 				<!-- Volume -->
-				<button class="ctrl-btn" onclick={handleToggleMute} title={isMuted ? 'Unmute' : 'Mute'}>
+				<button class="ctrl-btn" onclick={handleToggleMute} title={isMuted ? $t['player.unmute'] : $t['player.mute']}>
 					{#if isMuted}
 						<VolumeX size={18} strokeWidth={2} />
 					{:else}
@@ -229,8 +237,40 @@
 					oninput={handleVolumeInput}
 				/>
 
+				<!-- Video Adjustments -->
+				<div class="adjustments-wrapper">
+					<button class="ctrl-btn" onclick={() => showAdjustments = !showAdjustments} title={$t['player.adjustments']}>
+						<SlidersHorizontal size={18} strokeWidth={2} />
+					</button>
+					{#if showAdjustments}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<!-- svelte-ignore a11y_click_events_have_key_events -->
+						<div class="adjustments-panel" onclick={(e) => e.stopPropagation()}>
+							<div class="adj-header">
+								<span class="adj-title">{$t['player.adjustments']}</span>
+								<button class="adj-reset" onclick={() => resetVideoAdjustments()}>{$t['player.reset']}</button>
+							</div>
+							<div class="adj-slider-row">
+								<span class="adj-label">{$t['player.brightness']}</span>
+								<input type="range" class="adj-slider" min="-100" max="100" step="1" value={$brightness} oninput={(e) => setVideoAdjustment('brightness', parseInt((e.target as HTMLInputElement).value))} />
+								<span class="adj-value">{$brightness}</span>
+							</div>
+							<div class="adj-slider-row">
+								<span class="adj-label">{$t['player.contrast']}</span>
+								<input type="range" class="adj-slider" min="-100" max="100" step="1" value={$contrast} oninput={(e) => setVideoAdjustment('contrast', parseInt((e.target as HTMLInputElement).value))} />
+								<span class="adj-value">{$contrast}</span>
+							</div>
+							<div class="adj-slider-row">
+								<span class="adj-label">{$t['player.saturation']}</span>
+								<input type="range" class="adj-slider" min="-100" max="100" step="1" value={$saturation} oninput={(e) => setVideoAdjustment('saturation', parseInt((e.target as HTMLInputElement).value))} />
+								<span class="adj-value">{$saturation}</span>
+							</div>
+						</div>
+					{/if}
+				</div>
+
 				<!-- Fullscreen -->
-				<button class="ctrl-btn" onclick={handleFullscreen} title={isFs ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}>
+				<button class="ctrl-btn" onclick={handleFullscreen} title={isFs ? $t['player.exitFullscreen'] : $t['player.fullscreen']}>
 					{#if isFs}
 						<Minimize size={18} strokeWidth={2} />
 					{:else}
@@ -385,5 +425,100 @@
 		border-radius: 50%;
 		background: #fff;
 		cursor: pointer;
+	}
+
+	/* Video Adjustments Panel */
+	.adjustments-wrapper {
+		position: relative;
+	}
+
+	.adjustments-panel {
+		position: absolute;
+		bottom: 100%;
+		right: 0;
+		margin-bottom: 8px;
+		background: rgba(0, 0, 0, 0.9);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 8px;
+		padding: 12px 16px;
+		min-width: 240px;
+		backdrop-filter: blur(10px);
+	}
+
+	.adj-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 12px;
+		padding-bottom: 8px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	}
+
+	.adj-title {
+		color: #fff;
+		font-size: 0.8rem;
+		font-weight: 600;
+	}
+
+	.adj-reset {
+		background: rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		color: rgba(255, 255, 255, 0.8);
+		padding: 2px 10px;
+		border-radius: 4px;
+		font-size: 0.7rem;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.adj-reset:hover {
+		background: rgba(255, 255, 255, 0.2);
+		color: #fff;
+	}
+
+	.adj-slider-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 8px;
+	}
+
+	.adj-slider-row:last-child {
+		margin-bottom: 0;
+	}
+
+	.adj-label {
+		color: rgba(255, 255, 255, 0.7);
+		font-size: 0.75rem;
+		min-width: 70px;
+	}
+
+	.adj-slider {
+		flex: 1;
+		height: 4px;
+		-webkit-appearance: none;
+		appearance: none;
+		background: rgba(255, 255, 255, 0.2);
+		border-radius: 2px;
+		outline: none;
+		cursor: pointer;
+	}
+
+	.adj-slider::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		background: var(--accent);
+		cursor: pointer;
+	}
+
+	.adj-value {
+		color: rgba(255, 255, 255, 0.6);
+		font-size: 0.7rem;
+		font-family: monospace;
+		min-width: 28px;
+		text-align: right;
 	}
 </style>

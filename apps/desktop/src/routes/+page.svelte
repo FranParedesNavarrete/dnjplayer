@@ -1,20 +1,21 @@
 <script lang="ts">
 	import { Clapperboard } from 'lucide-svelte';
+	import { t } from '$lib/i18n';
 </script>
 
 <div class="library-page">
 	<div class="page-header">
-		<h2>Library</h2>
-		<p class="subtitle">Your recently played and pre-processed content</p>
+		<h2>{$t['library.title']}</h2>
+		<p class="subtitle">{$t['library.subtitle']}</p>
 	</div>
 
 	<div class="empty-state">
 		<div class="empty-icon">
 			<Clapperboard size={48} strokeWidth={1.2} />
 		</div>
-		<h3>No content yet</h3>
-		<p>Browse your Mega storage and play a video to get started.</p>
-		<a href="/browse" class="btn-primary">Browse Mega</a>
+		<h3>{$t['library.empty']}</h3>
+		<p>{$t['library.emptyHint']}</p>
+		<a href="/browse" class="btn-primary">{$t['library.browseMega']}</a>
 	</div>
 </div>
 

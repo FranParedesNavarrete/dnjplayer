@@ -5,6 +5,7 @@
 	import { isPaused } from '$lib/stores/player';
 	import PlayerControls from './PlayerControls.svelte';
 	import { Play } from 'lucide-svelte';
+	import { t } from '$lib/i18n';
 
 	let videoAreaEl: HTMLDivElement;
 	let resizeObserver: ResizeObserver | null = null;
@@ -50,7 +51,7 @@
 				<div class="placeholder-icon">
 					<Play size={56} strokeWidth={1.2} />
 				</div>
-				<p>Select a video from Browse to start playing</p>
+				<p>{$t['player.placeholder']}</p>
 			</div>
 		{/if}
 	</div>
