@@ -48,11 +48,24 @@ ln -sf /opt/homebrew/lib/libmpv.2.dylib ~/lib/libmpv.2.dylib
 
 ### Windows
 
-libmpv is bundled via `src-tauri/lib/` — no extra steps needed.
+The `libmpv-wrapper.dll` is bundled in the repo. You also need `libmpv-2.dll` (the mpv runtime):
+
+```bash
+# Option 1: Run the setup script (requires Git Bash + 7-Zip)
+bash apps/desktop/scripts/setup-libmpv.sh
+
+# Option 2: Manual download
+# 1. Go to https://github.com/zhongfly/mpv-winbuild/releases
+# 2. Download the latest mpv-dev-x86_64-*.7z
+# 3. Extract libmpv-2.dll from the archive
+# 4. Place it in apps/desktop/src-tauri/lib/
+```
 
 ### Linux
 
 ```bash
+# Install system libmpv (the wrapper .so is already bundled)
+
 # Debian/Ubuntu
 sudo apt install libmpv-dev
 
@@ -72,6 +85,9 @@ cd dnjplayer
 
 # Install dependencies
 pnpm install
+
+# Windows only: download libmpv-2.dll (~30MB compressed)
+bash apps/desktop/scripts/setup-libmpv.sh
 
 # Run in development mode
 pnpm tauri dev

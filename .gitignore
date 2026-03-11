@@ -12,6 +12,9 @@ target/
 # Tauri
 apps/desktop/src-tauri/target/
 
+# Large native binaries (downloaded via scripts/setup-libmpv.sh)
+apps/desktop/src-tauri/lib/libmpv-2.dll
+
 # Docker cache
 docker/cache/
 
