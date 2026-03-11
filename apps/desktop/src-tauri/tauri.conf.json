@@ -30,7 +30,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.png"],
-    "resources": ["lib/**/*"]
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "resources": [
+      "lib/**/*"
+    ]
   }
 }
