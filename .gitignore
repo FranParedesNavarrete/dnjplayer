@@ -19,4 +19,4 @@ docker/cache/
 .idea/
 *.code-workspace
 .claude
-CLAUDE.md
+/CLAUDE.md
