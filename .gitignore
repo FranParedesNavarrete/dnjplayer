@@ -1,0 +1,22 @@
+node_modules/
+dist/
+build/
+target/
+.DS_Store
+*.swp
+*.swo
+.env
+.env.*
+!.env.example
+
+# Tauri
+apps/desktop/src-tauri/target/
+
+# Docker cache
+docker/cache/
+
+# IDE
+.idea/
+*.code-workspace
+.claude
+CLAUDE.md

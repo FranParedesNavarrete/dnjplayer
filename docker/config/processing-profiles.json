@@ -1,0 +1,36 @@
+{
+  "profiles": {
+    "720p_to_1080p": {
+      "name": "720p to 1080p",
+      "target_w": 1920,
+      "target_h": 1080,
+      "recommended_shader_mode": "B",
+      "encoder_preset": "p5",
+      "cq": 20
+    },
+    "720p_to_4k": {
+      "name": "720p to 4K",
+      "target_w": 3840,
+      "target_h": 2160,
+      "recommended_shader_mode": "B",
+      "encoder_preset": "p7",
+      "cq": 18
+    },
+    "1080p_to_4k": {
+      "name": "1080p to 4K",
+      "target_w": 3840,
+      "target_h": 2160,
+      "recommended_shader_mode": "A",
+      "encoder_preset": "p7",
+      "cq": 18
+    },
+    "480p_to_1080p": {
+      "name": "480p to 1080p",
+      "target_w": 1920,
+      "target_h": 1080,
+      "recommended_shader_mode": "C",
+      "encoder_preset": "p5",
+      "cq": 22
+    }
+  }
+}

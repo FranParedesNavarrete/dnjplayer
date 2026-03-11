@@ -1,0 +1,47 @@
+# dnjplayer Anime4K Pre-processing Container
+# Requires: NVIDIA GPU + NVIDIA Container Toolkit
+# Usage: docker build -t dnjplayer/processor:latest -f Dockerfile.processor .
+
+FROM nvidia/cuda:12.2.0-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    git cmake ninja-build meson pkg-config \
+    libvulkan-dev libshaderc-dev python3-pip \
+    nasm yasm libass-dev libfdk-aac-dev libx265-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build libplacebo (CUDA-compatible version)
+RUN git clone --branch v6.292.1 --depth 1 https://github.com/haasn/libplacebo.git && \
+    cd libplacebo && mkdir build && cd build && \
+    meson setup .. -Dvulkan=enabled -Dshaderc=enabled && \
+    ninja && ninja install
+
+# Build FFmpeg with libplacebo + NVENC + NVDEC
+RUN git clone --depth 1 https://git.ffmpeg.org/ffmpeg.git && \
+    cd ffmpeg && \
+    ./configure \
+        --enable-nonfree --enable-cuda-nvcc --enable-libnpp \
+        --enable-nvenc --enable-nvdec --enable-cuvid \
+        --enable-libplacebo --enable-vulkan \
+        --enable-libass --enable-libfdk-aac --enable-libx265 \
+        --extra-cflags=-I/usr/local/cuda/include \
+        --extra-ldflags=-L/usr/local/cuda/lib64 && \
+    make -j$(nproc) && make install
+
+# Runtime image
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y \
+    libvulkan1 libass9 libx265-199 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/ffmpeg /usr/local/bin/
+COPY --from=builder /usr/local/lib/lib* /usr/local/lib/
+RUN ldconfig
+
+COPY scripts/process.sh /usr/local/bin/process.sh
+RUN chmod +x /usr/local/bin/process.sh
+
+ENTRYPOINT ["/usr/local/bin/process.sh"]
