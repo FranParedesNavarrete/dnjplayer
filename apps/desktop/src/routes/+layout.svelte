@@ -12,6 +12,10 @@
 	let { children } = $props();
 
 	onMount(() => {
+		// Signal that Svelte has mounted — remove loading screen
+		window.__dnjReady = true;
+		document.getElementById('app-loading')?.remove();
+
 		theme.init();
 		// Check Mega connection status on app startup
 		megaCheckStatus().then((status) => {

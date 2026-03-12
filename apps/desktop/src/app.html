@@ -3,9 +3,45 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<script>
+			window.__dnjReady = false;
+			window.onerror = function(msg, url, line, col, err) {
+				console.error('[dnjplayer:onerror]', msg, url, line, col, err);
+				var d = document.getElementById('app-loading');
+				if (d) {
+					d.style.color = '#f85149';
+					d.textContent = 'JS Error: ' + msg + '\n' + (url||'') + ':' + (line||'') + '\n\n' + (err && err.stack ? err.stack : '');
+				}
+			};
+			window.onunhandledrejection = function(e) {
+				var r = e.reason;
+				console.error('[dnjplayer:rejection]', r);
+				var d = document.getElementById('app-loading');
+				if (d) {
+					d.style.color = '#f85149';
+					d.textContent = 'Unhandled Rejection:\n' + (r ? (r.message || r.stack || String(r)) : 'unknown') + '\n\n' + (r && r.stack ? r.stack : '');
+				}
+			};
+			// Timeout diagnostic: if Svelte hasn't mounted after 8 seconds, show debug info
+			setTimeout(function() {
+				if (!window.__dnjReady) {
+					var d = document.getElementById('app-loading');
+					if (d) {
+						d.style.color = '#d29922';
+						d.textContent = 'App failed to mount after 8s.\n\nDiagnostics:\n'
+							+ '- URL: ' + location.href + '\n'
+							+ '- UA: ' + navigator.userAgent + '\n'
+							+ '- Scripts loaded: ' + document.querySelectorAll('script[type=module]').length + '\n'
+							+ '- Styles loaded: ' + document.querySelectorAll('style, link[rel=stylesheet]').length + '\n'
+							+ '\nCheck the Tauri console for errors.';
+					}
+				}
+			}, 8000);
+		</script>
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover">
+	<body data-sveltekit-preload-data="hover" style="background:#0d1117;">
+		<div id="app-loading" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0d1117;color:#8b949e;font:14px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;z-index:99998;white-space:pre-wrap;padding:24px;">Loading...</div>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>
