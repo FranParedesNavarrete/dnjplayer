@@ -4,19 +4,6 @@ export interface VideoAdjustments {
 	saturation: number;
 	gamma: number;
 	hue: number;
-	deband: boolean;
-	deinterlace: boolean;
-}
-
-export interface VideoProfile {
-	id: string;
-	name: string;
-	brightness: number;
-	contrast: number;
-	saturation: number;
-	gamma: number;
-	hue: number;
-	deband: boolean;
 }
 
 export interface LibraryItem {

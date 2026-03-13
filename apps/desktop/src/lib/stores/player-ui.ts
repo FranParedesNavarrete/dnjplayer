@@ -9,4 +9,3 @@ export const currentVideoTitle = writable<string | null>(null);
 
 // UI state for player page
 export const showControls = writable(true);
-export const controlsTimeout = writable<ReturnType<typeof setTimeout> | null>(null);

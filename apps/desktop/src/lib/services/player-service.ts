@@ -139,7 +139,7 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 			if (windowId && typeof windowId === 'number' && windowId !== 0) {
 				await invoke('attach_mpv_to_window', { mpvWindowPtr: windowId });
 				mpvWindowAttached = true;
-				console.log('[player] mpv window attached as child, window-id:', windowId);
+				console.debug('[player] mpv window attached as child, window-id:', windowId);
 			}
 		} catch (e) {
 			console.warn('[player] Failed to attach mpv window:', e);
@@ -279,8 +279,6 @@ export function getDefaultAdjustments(): VideoAdjustments {
 		saturation: 0,
 		gamma: 0,
 		hue: 0,
-		deband: false,
-		deinterlace: false,
 	};
 }
 

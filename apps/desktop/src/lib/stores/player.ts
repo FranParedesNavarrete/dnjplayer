@@ -8,7 +8,6 @@ export const filename = writable<string | null>(null);
 export const videoWidth = writable<number | null>(null);
 export const videoHeight = writable<number | null>(null);
 export const volume = writable(100);
-export const isMuted = writable(false);
 export const speed = writable(1.0);
 
 // Video adjustments
@@ -17,8 +16,6 @@ export const contrast = writable(0);
 export const saturation = writable(0);
 export const gamma = writable(0);
 export const hue = writable(0);
-export const deband = writable(false);
-export const deinterlace = writable(false);
 
 // Subtitle tracks
 export const subtitleTracks = writable<{ id: number; title?: string; lang?: string }[]>([]);

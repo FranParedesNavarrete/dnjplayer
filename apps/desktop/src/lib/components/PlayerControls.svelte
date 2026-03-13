@@ -13,7 +13,7 @@
 		contrast,
 		saturation
 	} from '$lib/stores/player';
-	import { currentVideoTitle, showControls } from '$lib/stores/player-ui';
+	import { currentVideoTitle } from '$lib/stores/player-ui';
 	import {
 		togglePause,
 		seek,
