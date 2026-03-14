@@ -7,10 +7,6 @@
 		speed as speedStore,
 		progress,
 		filename,
-		subtitleTracks,
-		currentSubtitleId,
-		audioTracks,
-		currentAudioId,
 		brightness,
 		contrast,
 		saturation
@@ -25,8 +21,6 @@
 		setMute,
 		stopVideo,
 		toggleFullscreen,
-		setSubtitleTrack,
-		setAudioTrack,
 		setVideoAdjustment,
 		resetVideoAdjustments
 	} from '$lib/services/player-service';
@@ -84,16 +78,6 @@
 	function handleSpeedChange(e: Event) {
 		const target = e.target as HTMLSelectElement;
 		setSpeed(parseFloat(target.value));
-	}
-
-	function handleSubtitleChange(e: Event) {
-		const target = e.target as HTMLSelectElement;
-		setSubtitleTrack(parseInt(target.value, 10));
-	}
-
-	function handleAudioChange(e: Event) {
-		const target = e.target as HTMLSelectElement;
-		setAudioTrack(parseInt(target.value, 10));
 	}
 
 	function handleStop() {
@@ -212,25 +196,6 @@
 		</div>
 
 		<div class="right-controls">
-			<!-- Audio tracks -->
-			{#if $audioTracks.length > 1}
-				<select class="track-select" value={String($currentAudioId)} onchange={handleAudioChange} title={$t['player.audio']}>
-					{#each $audioTracks as track}
-						<option value={String(track.id)}>{track.title || track.lang || `Audio ${track.id}`}</option>
-					{/each}
-				</select>
-			{/if}
-
-			<!-- Subtitles -->
-			{#if $subtitleTracks.length > 0}
-				<select class="track-select" value={String($currentSubtitleId)} onchange={handleSubtitleChange} title={$t['player.subtitles']}>
-					<option value="0">{$t['player.subsOff']}</option>
-					{#each $subtitleTracks as track}
-						<option value={String(track.id)}>{track.title || track.lang || `Sub ${track.id}`}</option>
-					{/each}
-				</select>
-			{/if}
-
 			<!-- Speed -->
 			<select class="speed-select" value={String($speedStore)} onchange={handleSpeedChange}>
 				<option value="0.25">0.25x</option>
@@ -452,8 +417,7 @@
 		padding: 8px 10px;
 	}
 
-	.speed-select,
-	.track-select {
+	.speed-select {
 		background: var(--bg-tertiary);
 		color: var(--text-primary);
 		border: 1px solid var(--border);

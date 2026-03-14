@@ -17,14 +17,6 @@ export const saturation = writable(0);
 export const gamma = writable(0);
 export const hue = writable(0);
 
-// Subtitle tracks
-export const subtitleTracks = writable<{ id: number; title?: string; lang?: string }[]>([]);
-export const currentSubtitleId = writable<number>(0); // 0 = off
-
-// Audio tracks
-export const audioTracks = writable<{ id: number; title?: string; lang?: string }[]>([]);
-export const currentAudioId = writable<number>(1); // 1 = first audio track
-
 // Anime4K shader state
 export const activeShaderMode = writable<'A' | 'B' | 'C' | 'off'>('off');
 export const shaderVariant = writable<'S' | 'M' | 'L' | 'VL' | 'UL'>('VL');

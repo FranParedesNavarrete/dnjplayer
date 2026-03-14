@@ -19,10 +19,6 @@ import {
 	videoHeight,
 	volume,
 	speed,
-	subtitleTracks,
-	currentSubtitleId,
-	audioTracks,
-	currentAudioId,
 	brightness,
 	contrast,
 	saturation,
@@ -167,8 +163,6 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 		log.info('[player] attachMpvWindow done, attached:', mpvWindowAttached);
 	}
 
-	// Fetch audio and subtitle tracks after video loads
-	setTimeout(() => fetchTracks(), 1000);
 }
 
 /**
@@ -257,57 +251,6 @@ export async function stopVideo(): Promise<void> {
 	currentTime.set(null);
 	duration.set(null);
 	filename.set(null);
-	subtitleTracks.set([]);
-	currentSubtitleId.set(0);
-	audioTracks.set([]);
-	currentAudioId.set(1);
-}
-
-// --- Track fetching (audio + subtitle) ---
-
-async function fetchTracks(): Promise<void> {
-	if (!initialized) return;
-	try {
-		const trackList = await getProperty('track-list', 'node');
-		if (Array.isArray(trackList)) {
-			const subs = trackList
-				.filter((t: any) => t.type === 'sub')
-				.map((t: any) => ({
-					id: t.id as number,
-					title: t.title as string | undefined,
-					lang: t.lang as string | undefined,
-				}));
-			subtitleTracks.set(subs);
-
-			const audio = trackList
-				.filter((t: any) => t.type === 'audio')
-				.map((t: any) => ({
-					id: t.id as number,
-					title: t.title as string | undefined,
-					lang: t.lang as string | undefined,
-				}));
-			audioTracks.set(audio);
-		} else {
-			subtitleTracks.set([]);
-			audioTracks.set([]);
-		}
-	} catch (e) {
-		log.warn('[player] Failed to get tracks:', e);
-		subtitleTracks.set([]);
-		audioTracks.set([]);
-	}
-}
-
-export async function setSubtitleTrack(id: number): Promise<void> {
-	if (!initialized) return;
-	await setProperty('sid', id === 0 ? 'no' : id);
-	currentSubtitleId.set(id);
-}
-
-export async function setAudioTrack(id: number): Promise<void> {
-	if (!initialized) return;
-	await setProperty('aid', id);
-	currentAudioId.set(id);
 }
 
 // --- Playback controls ---
