@@ -25,8 +25,11 @@ import {
 	gamma,
 	hue
 } from '$lib/stores/player';
-import { playerActive, currentVideoUrl, currentVideoTitle } from '$lib/stores/player-ui';
+import { get } from 'svelte/store';
+import { playerActive, currentVideoUrl, currentVideoTitle, playlist, playlistIndex } from '$lib/stores/player-ui';
 import type { VideoAdjustments, ShaderMode } from '$lib/types/player';
+import { markWatched } from '$lib/services/db-service';
+import { megaGetWebdavUrl } from '$lib/services/mega-service';
 import { log } from '$lib/log';
 
 // Observable properties for mpv
@@ -397,4 +400,64 @@ export async function isFullscreen(): Promise<boolean> {
 
 export function isPlayerInitialized(): boolean {
 	return initialized;
+}
+
+// --- Playlist navigation ---
+
+let autoAdvancing = false;
+
+export async function playNext(): Promise<boolean> {
+	const items = get(playlist);
+	const idx = get(playlistIndex);
+	if (idx >= items.length - 1) return false;
+
+	const nextIdx = idx + 1;
+	const item = items[nextIdx];
+	playlistIndex.set(nextIdx);
+
+	try {
+		const url = await megaGetWebdavUrl(item.megaPath);
+		await loadVideo(url, item.name);
+		await setProperty('pause', 'no');
+		markWatched(item.megaPath, item.name).catch((e) =>
+			log.warn('[player] Failed to mark watched:', e)
+		);
+		return true;
+	} catch (e) {
+		log.error('[player] playNext failed:', e);
+		return false;
+	}
+}
+
+export async function playPrev(): Promise<boolean> {
+	const items = get(playlist);
+	const idx = get(playlistIndex);
+	if (idx <= 0) return false;
+
+	const prevIdx = idx - 1;
+	const item = items[prevIdx];
+	playlistIndex.set(prevIdx);
+
+	try {
+		const url = await megaGetWebdavUrl(item.megaPath);
+		await loadVideo(url, item.name);
+		await setProperty('pause', 'no');
+		markWatched(item.megaPath, item.name).catch((e) =>
+			log.warn('[player] Failed to mark watched:', e)
+		);
+		return true;
+	} catch (e) {
+		log.error('[player] playPrev failed:', e);
+		return false;
+	}
+}
+
+export function checkAutoAdvance(timePos: number | null, dur: number | null): void {
+	if (autoAdvancing || !timePos || !dur || dur <= 5) return;
+	if (timePos >= dur - 1) {
+		autoAdvancing = true;
+		playNext().finally(() => {
+			autoAdvancing = false;
+		});
+	}
 }

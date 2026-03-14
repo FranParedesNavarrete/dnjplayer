@@ -6,9 +6,11 @@
 	import { markWatched, getWatchedPaths } from '$lib/services/db-service';
 	import { log } from '$lib/log';
 	import { currentPath, entries, isLoading, megaError } from '$lib/stores/mega';
+	import { playlist, playlistIndex } from '$lib/stores/player-ui';
 	import type { MegaEntry } from '$lib/types/mega';
 	import type { MegaShare } from '$lib/types/mega';
-	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users, Check } from 'lucide-svelte';
+	import type { PlaylistItem } from '$lib/types/player';
+	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users, Check, Square, CheckSquare, Play } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 
 	const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.webm', '.mov', '.flv', '.wmv', '.m4v', '.ts'];
@@ -26,6 +28,16 @@
 	let shares = $state<MegaShare[]>([]);
 	let watchedPaths = $state<Set<string>>(new Set());
 
+	// Selection state
+	let selectedPaths = $state<Set<string>>(new Set());
+	let selectionType = $state<'file' | 'folder' | null>(null);
+	let loadingSelection = $state(false);
+
+	let selectedCount = $derived(selectedPaths.size);
+	let hasSelection = $derived(selectedCount > 0);
+	let foldersDisabled = $derived(selectionType === 'file');
+	let filesDisabled = $derived(selectionType === 'folder');
+
 	onMount(async () => {
 		try {
 			watchedPaths = await getWatchedPaths();
@@ -34,7 +46,6 @@
 		}
 	});
 
-	// Determine if we're browsing inside a share (path starts with //from/)
 	let isInsideShare = $derived($currentPath.startsWith('//from/'));
 
 	$effect(() => {
@@ -77,22 +88,28 @@
 		}
 	}
 
+	function clearSelection() {
+		selectedPaths = new Set();
+		selectionType = null;
+	}
+
 	function navigateToFolder(entry: MegaEntry) {
+		clearSelection();
 		currentPath.set(entry.path);
 	}
 
 	function navigateToShare(share: MegaShare) {
+		clearSelection();
 		currentPath.set(share.path);
 	}
 
 	function navigateUp() {
+		clearSelection();
 		const path = $currentPath;
 		if (activeTab === 'cloud' && path === '/') return;
 		if (isInsideShare) {
-			// If at share root (//from/user:Folder), go back to shares list
 			const afterFrom = path.replace('//from/', '');
 			if (!afterFrom.includes('/')) {
-				// At share root level, switch back to shares list
 				activeTab = 'shared';
 				currentPath.set('/');
 				return;
@@ -103,6 +120,7 @@
 	}
 
 	function switchTab(tab: SectionId) {
+		clearSelection();
 		activeTab = tab;
 		if (tab === 'cloud') {
 			currentPath.set('/');
@@ -126,21 +144,94 @@
 		return /\.(srt|ass|ssa|vtt|sub)$/i.test(name);
 	}
 
+	function toggleSelection(entry: MegaEntry) {
+		const entryType = entry.entry_type === 'folder' ? 'folder' : 'file';
+		if (selectionType !== null && selectionType !== entryType) return;
+
+		const next = new Set(selectedPaths);
+		if (next.has(entry.path)) {
+			next.delete(entry.path);
+			if (next.size === 0) selectionType = null;
+		} else {
+			next.add(entry.path);
+			selectionType = entryType;
+		}
+		selectedPaths = next;
+	}
+
 	async function playVideo(entry: MegaEntry) {
 		try {
+			playlist.set([{ megaPath: entry.path, name: entry.name }]);
+			playlistIndex.set(0);
+
 			log.info('[FileBrowser] Getting WebDAV URL for:', entry.path);
 			const url = await megaGetWebdavUrl(entry.path);
-			log.info('[FileBrowser] Calling loadVideo...');
 			await loadVideo(url, entry.name);
-			// Mark as watched in SQLite
 			markWatched(entry.path, entry.name).then(() => {
 				watchedPaths = new Set([...watchedPaths, entry.path]);
 			}).catch((e) => log.warn('[FileBrowser] Failed to mark watched:', e));
-			log.info('[FileBrowser] loadVideo completed, navigating to /player');
 			goto('/player');
 		} catch (e) {
 			log.error('[FileBrowser] playVideo failed:', e);
 			error = e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	async function playSelected() {
+		if (selectedPaths.size === 0) return;
+
+		loadingSelection = true;
+		error = '';
+
+		try {
+			let playlistItems: PlaylistItem[] = [];
+
+			if (selectionType === 'file') {
+				const selectedFiles = files
+					.filter((f) => selectedPaths.has(f.path) && isVideo(f.name))
+					.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+				playlistItems = selectedFiles.map((f) => ({ megaPath: f.path, name: f.name }));
+			} else if (selectionType === 'folder') {
+				const selectedFolders = folders
+					.filter((f) => selectedPaths.has(f.path))
+					.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+				for (const folder of selectedFolders) {
+					try {
+						const folderEntries = await megaListFiles(folder.path);
+						const videoFiles = folderEntries
+							.filter((e) => e.entry_type === 'file' && isVideo(e.name))
+							.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+						playlistItems.push(...videoFiles.map((f) => ({ megaPath: f.path, name: f.name })));
+					} catch (e) {
+						log.warn('[FileBrowser] Failed to load folder:', folder.path, e);
+					}
+				}
+			}
+
+			if (playlistItems.length === 0) {
+				error = 'No video files found in selection.';
+				return;
+			}
+
+			playlist.set(playlistItems);
+			playlistIndex.set(0);
+
+			const firstItem = playlistItems[0];
+			const url = await megaGetWebdavUrl(firstItem.megaPath);
+			await loadVideo(url, firstItem.name);
+			markWatched(firstItem.megaPath, firstItem.name).then(() => {
+				watchedPaths = new Set([...watchedPaths, firstItem.megaPath]);
+			}).catch((e) => log.warn('[FileBrowser] Failed to mark watched:', e));
+
+			log.info('[FileBrowser] Playlist loaded with', playlistItems.length, 'items');
+			clearSelection();
+			goto('/player');
+		} catch (e) {
+			log.error('[FileBrowser] playSelected failed:', e);
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			loadingSelection = false;
 		}
 	}
 
@@ -212,13 +303,32 @@
 		<div class="error-banner">{error}</div>
 	{/if}
 
+	{#if hasSelection}
+		<div class="selection-bar">
+			<span class="selection-count">{$t['browser.selectedCount'].replace('{count}', String(selectedCount))}</span>
+			<div class="selection-actions">
+				<button class="selection-clear-btn" onclick={clearSelection}>
+					{$t['browser.clearSelection']}
+				</button>
+				<button class="selection-play-btn" onclick={playSelected} disabled={loadingSelection}>
+					{#if loadingSelection}
+						<span class="spinner-small"></span>
+						{$t['browser.loadingFolders']}
+					{:else}
+						<Play size={14} strokeWidth={2} />
+						{$t['browser.playSelected']}
+					{/if}
+				</button>
+			</div>
+		</div>
+	{/if}
+
 	{#if $isLoading}
 		<div class="loading-state">
 			<span class="spinner"></span>
 			<span>{$t['browser.loading']}</span>
 		</div>
 	{:else if activeTab === 'shared' && !isInsideShare}
-		<!-- Shares list view -->
 		{#if shares.length === 0}
 			<div class="empty-state">
 				<p>{$t['browser.noShared']}</p>
@@ -247,49 +357,79 @@
 	{:else}
 		<div class="file-list">
 			{#each folders as entry (entry.path)}
-				<button
-					class="file-entry is-folder"
-					onclick={() => handleEntryClick(entry)}
-					onkeydown={(e) => handleEntryKeydown(e, entry)}
-				>
-					<span class="entry-icon folder-icon">
-						<Folder size={16} strokeWidth={1.8} />
-					</span>
-					<span class="entry-name">{entry.name}</span>
-					<span class="entry-size">{entry.size}</span>
-				</button>
+				<div class="file-entry-row">
+					<button
+						class="checkbox-btn"
+						class:disabled={foldersDisabled}
+						onclick={(e) => { e.stopPropagation(); if (!foldersDisabled) toggleSelection(entry); }}
+					>
+						{#if selectedPaths.has(entry.path)}
+							<CheckSquare size={16} />
+						{:else}
+							<Square size={16} />
+						{/if}
+					</button>
+					<button
+						class="file-entry is-folder"
+						onclick={() => handleEntryClick(entry)}
+						onkeydown={(e) => handleEntryKeydown(e, entry)}
+					>
+						<span class="entry-icon folder-icon">
+							<Folder size={16} strokeWidth={1.8} />
+						</span>
+						<span class="entry-name">{entry.name}</span>
+						<span class="entry-size">{entry.size}</span>
+					</button>
+				</div>
 			{/each}
 			{#each files as entry (entry.path)}
-				<button
-					class="file-entry"
-					class:is-video={isVideo(entry.name)}
-					onclick={() => handleEntryClick(entry)}
-					onkeydown={(e) => handleEntryKeydown(e, entry)}
-				>
-					<span class="entry-icon" class:video-icon={isVideo(entry.name)}>
-						{#if isVideo(entry.name)}
-							<Film size={16} strokeWidth={1.8} />
-						{:else if isAudio(entry.name)}
-							<Music size={16} strokeWidth={1.8} />
-						{:else if isImage(entry.name)}
-							<Image size={16} strokeWidth={1.8} />
-						{:else if isSubtitle(entry.name)}
-							<FileText size={16} strokeWidth={1.8} />
-						{:else}
-							<File size={16} strokeWidth={1.8} />
-						{/if}
-					</span>
-					<span class="entry-name">{entry.name}</span>
-					{#if watchedPaths.has(entry.path)}
-						<span class="watched-badge" title={$t['browser.watched']}>
-							<Check size={14} strokeWidth={2.5} />
-						</span>
-					{/if}
-					<span class="entry-size">{entry.size}</span>
+				<div class="file-entry-row">
 					{#if isVideo(entry.name)}
-						<span class="play-badge">{$t['browser.play']}</span>
+						<button
+							class="checkbox-btn"
+							class:disabled={filesDisabled}
+							onclick={(e) => { e.stopPropagation(); if (!filesDisabled) toggleSelection(entry); }}
+						>
+							{#if selectedPaths.has(entry.path)}
+								<CheckSquare size={16} />
+							{:else}
+								<Square size={16} />
+							{/if}
+						</button>
+					{:else}
+						<span class="checkbox-spacer"></span>
 					{/if}
-				</button>
+					<button
+						class="file-entry"
+						class:is-video={isVideo(entry.name)}
+						onclick={() => handleEntryClick(entry)}
+						onkeydown={(e) => handleEntryKeydown(e, entry)}
+					>
+						<span class="entry-icon" class:video-icon={isVideo(entry.name)}>
+							{#if isVideo(entry.name)}
+								<Film size={16} strokeWidth={1.8} />
+							{:else if isAudio(entry.name)}
+								<Music size={16} strokeWidth={1.8} />
+							{:else if isImage(entry.name)}
+								<Image size={16} strokeWidth={1.8} />
+							{:else if isSubtitle(entry.name)}
+								<FileText size={16} strokeWidth={1.8} />
+							{:else}
+								<File size={16} strokeWidth={1.8} />
+							{/if}
+						</span>
+						<span class="entry-name">{entry.name}</span>
+						{#if watchedPaths.has(entry.path)}
+							<span class="watched-badge" title={$t['browser.watched']}>
+								<Check size={14} strokeWidth={2.5} />
+							</span>
+						{/if}
+						<span class="entry-size">{entry.size}</span>
+						{#if isVideo(entry.name)}
+							<span class="play-badge">{$t['browser.play']}</span>
+						{/if}
+					</button>
+				</div>
 			{/each}
 		</div>
 	{/if}
@@ -425,6 +565,69 @@
 		margin-bottom: 12px;
 	}
 
+	.selection-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 8px 12px;
+		margin-bottom: 12px;
+		background: rgba(88, 166, 255, 0.08);
+		border: 1px solid var(--accent);
+		border-radius: 6px;
+	}
+
+	.selection-count {
+		font-size: 0.85rem;
+		color: var(--accent);
+		font-weight: 500;
+	}
+
+	.selection-actions {
+		display: flex;
+		gap: 8px;
+	}
+
+	.selection-clear-btn {
+		padding: 5px 12px;
+		border-radius: 4px;
+		background: transparent;
+		border: 1px solid var(--border);
+		color: var(--text-secondary);
+		font-size: 0.8rem;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.selection-clear-btn:hover {
+		background: var(--bg-tertiary);
+		color: var(--text-primary);
+	}
+
+	.selection-play-btn {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 5px 14px;
+		border-radius: 4px;
+		background: var(--accent);
+		border: none;
+		color: var(--bg-primary);
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+
+	.selection-play-btn:hover:not(:disabled) {
+		background: var(--accent-hover);
+	}
+
+	.selection-play-btn:disabled {
+		opacity: 0.7;
+		cursor: not-allowed;
+	}
+
 	.loading-state {
 		display: flex;
 		align-items: center;
@@ -441,6 +644,16 @@
 		height: 18px;
 		border: 2px solid var(--border);
 		border-top-color: var(--accent);
+		border-radius: 50%;
+		animation: spin 0.6s linear infinite;
+	}
+
+	.spinner-small {
+		display: inline-block;
+		width: 14px;
+		height: 14px;
+		border: 2px solid rgba(255,255,255,0.3);
+		border-top-color: currentColor;
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;
 	}
@@ -462,6 +675,41 @@
 		overflow-y: auto;
 	}
 
+	.file-entry-row {
+		display: flex;
+		align-items: center;
+		gap: 0;
+	}
+
+	.checkbox-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 36px;
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		cursor: pointer;
+		flex-shrink: 0;
+		border-radius: 4px;
+		transition: color 0.15s;
+	}
+
+	.checkbox-btn:hover:not(.disabled) {
+		color: var(--accent);
+	}
+
+	.checkbox-btn.disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
+	}
+
+	.checkbox-spacer {
+		width: 32px;
+		flex-shrink: 0;
+	}
+
 	.file-entry {
 		display: flex;
 		align-items: center;
@@ -475,7 +723,8 @@
 		font-family: inherit;
 		text-align: left;
 		transition: background 0.1s;
-		width: 100%;
+		flex: 1;
+		min-width: 0;
 	}
 
 	.file-entry:hover {

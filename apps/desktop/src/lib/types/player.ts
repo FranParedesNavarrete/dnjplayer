@@ -21,3 +21,8 @@ export interface LibraryItem {
 
 export type ShaderMode = 'A' | 'B' | 'C' | 'off';
 export type ShaderVariant = 'S' | 'M' | 'L' | 'VL' | 'UL';
+
+export interface PlaylistItem {
+	megaPath: string;
+	name: string;
+}

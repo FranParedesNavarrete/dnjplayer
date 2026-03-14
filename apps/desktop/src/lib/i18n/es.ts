@@ -44,6 +44,10 @@ export const es: Record<string, string> = {
 	'browser.goUp': 'Subir',
 	'browser.play': 'Reproducir',
 	'browser.watched': 'Visto',
+	'browser.playSelected': 'Reproducir seleccion',
+	'browser.clearSelection': 'Limpiar',
+	'browser.selectedCount': '{count} seleccionados',
+	'browser.loadingFolders': 'Cargando contenido...',
 
 	// Reproductor
 	'player.placeholder': 'Selecciona un video desde Explorar para empezar a reproducir',
@@ -61,12 +65,17 @@ export const es: Record<string, string> = {
 	'player.contrast': 'Contraste',
 	'player.saturation': 'Saturacion',
 	'player.reset': 'Restablecer',
+	'player.next': 'Siguiente (N)',
+	'player.prev': 'Anterior (P)',
 
 	// Pagina Cola
-	'queue.title': 'Cola de procesamiento',
-	'queue.subtitle': 'Trabajos de pre-procesamiento Anime4K',
-	'queue.empty': 'No hay trabajos en cola',
-	'queue.emptyHint': 'Encola videos para pre-procesamiento Anime4K desde el explorador de archivos.',
+	'queue.title': 'Cola',
+	'queue.subtitle': 'Tu cola de reproduccion',
+	'queue.empty': 'La cola esta vacia',
+	'queue.emptyHint': 'Selecciona videos desde el explorador para armar tu cola.',
+	'queue.nowPlaying': 'Reproduciendo',
+	'queue.clear': 'Vaciar cola',
+	'queue.removeItem': 'Quitar de la cola',
 
 	// Pagina Ajustes
 	'settings.title': 'Ajustes',

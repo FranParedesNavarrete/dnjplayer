@@ -11,7 +11,7 @@
 		contrast,
 		saturation
 	} from '$lib/stores/player';
-	import { currentVideoTitle } from '$lib/stores/player-ui';
+	import { currentVideoTitle, playlist, playlistIndex } from '$lib/stores/player-ui';
 	import {
 		togglePause,
 		seek,
@@ -22,7 +22,10 @@
 		stopVideo,
 		toggleFullscreen,
 		setVideoAdjustment,
-		resetVideoAdjustments
+		resetVideoAdjustments,
+		playNext,
+		playPrev,
+		checkAutoAdvance
 	} from '$lib/services/player-service';
 	import {
 		Play,
@@ -39,6 +42,14 @@
 		ChevronDown
 	} from 'lucide-svelte';
 	import { t } from '$lib/i18n';
+
+	let hasPrev = $derived($playlistIndex > 0);
+	let hasNext = $derived($playlistIndex < $playlist.length - 1);
+
+	// Auto-advance to next item when current video ends
+	$effect(() => {
+		checkAutoAdvance($currentTime, $duration);
+	});
 
 	let isMuted = $state(false);
 	let isFs = $state(false);
@@ -122,6 +133,14 @@
 				handleToggleMute();
 				e.preventDefault();
 				break;
+			case 'n':
+				if (hasNext) playNext();
+				e.preventDefault();
+				break;
+			case 'p':
+				if (hasPrev) playPrev();
+				e.preventDefault();
+				break;
 			case 'Escape':
 				if (isFs) handleFullscreen();
 				break;
@@ -177,8 +196,11 @@
 	<!-- Button row -->
 	<div class="button-row">
 		<div class="left-controls">
-			<button class="ctrl-btn" onclick={() => seek(-10)} title={$t['player.rewind']}>
+			<button class="ctrl-btn" onclick={playPrev} disabled={!hasPrev} title={$t['player.prev']}>
 				<SkipBack size={18} strokeWidth={2} />
+			</button>
+			<button class="ctrl-btn" onclick={() => seek(-10)} title={$t['player.rewind']}>
+				<SkipBack size={14} strokeWidth={2} />
 			</button>
 			<button class="ctrl-btn play-btn" onclick={togglePause} title={$isPaused ? $t['player.play'] : $t['player.pause']}>
 				{#if $isPaused}
@@ -188,6 +210,9 @@
 				{/if}
 			</button>
 			<button class="ctrl-btn" onclick={() => seek(10)} title={$t['player.forward']}>
+				<SkipForward size={14} strokeWidth={2} />
+			</button>
+			<button class="ctrl-btn" onclick={playNext} disabled={!hasNext} title={$t['player.next']}>
 				<SkipForward size={18} strokeWidth={2} />
 			</button>
 			<button class="ctrl-btn" onclick={handleStop} title={$t['player.stop']}>

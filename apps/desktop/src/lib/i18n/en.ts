@@ -44,6 +44,10 @@ export const en: Record<string, string> = {
 	'browser.goUp': 'Go up',
 	'browser.play': 'Play',
 	'browser.watched': 'Watched',
+	'browser.playSelected': 'Play selected',
+	'browser.clearSelection': 'Clear',
+	'browser.selectedCount': '{count} selected',
+	'browser.loadingFolders': 'Loading folder contents...',
 
 	// Player
 	'player.placeholder': 'Select a video from Browse to start playing',
@@ -61,12 +65,17 @@ export const en: Record<string, string> = {
 	'player.contrast': 'Contrast',
 	'player.saturation': 'Saturation',
 	'player.reset': 'Reset',
+	'player.next': 'Next (N)',
+	'player.prev': 'Previous (P)',
 
 	// Queue page
-	'queue.title': 'Processing Queue',
-	'queue.subtitle': 'Anime4K pre-processing jobs',
-	'queue.empty': 'No jobs in queue',
-	'queue.emptyHint': 'Queue videos for Anime4K pre-processing from the file browser.',
+	'queue.title': 'Queue',
+	'queue.subtitle': 'Your playback queue',
+	'queue.empty': 'Queue is empty',
+	'queue.emptyHint': 'Select videos from the file browser to build your queue.',
+	'queue.nowPlaying': 'Now playing',
+	'queue.clear': 'Clear queue',
+	'queue.removeItem': 'Remove from queue',
 
 	// Settings page
 	'settings.title': 'Settings',
