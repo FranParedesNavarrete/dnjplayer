@@ -22,6 +22,7 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tauri-plugin-libmpv = "0.3"
+log = "0.4"
 raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]

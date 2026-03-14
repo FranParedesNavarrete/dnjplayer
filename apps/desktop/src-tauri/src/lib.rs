@@ -24,6 +24,12 @@ pub fn run() {
             sql: include_str!("db/migrations/002_jobs.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "create watched files table",
+            sql: include_str!("db/migrations/003_watched.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

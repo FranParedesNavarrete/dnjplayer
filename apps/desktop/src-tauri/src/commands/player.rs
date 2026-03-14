@@ -3,10 +3,10 @@
 #[tauri::command]
 pub fn js_log(level: String, msg: String) {
     match level.as_str() {
-        "error" => eprintln!("[webview:ERROR] {}", msg),
-        "warn" => println!("[webview:WARN] {}", msg),
-        "debug" => println!("[webview:DEBUG] {}", msg),
-        _ => println!("[webview] {}", msg),
+        "error" => log::error!("[webview] {}", msg),
+        "warn" => log::warn!("[webview] {}", msg),
+        "debug" => log::debug!("[webview] {}", msg),
+        _ => log::info!("[webview] {}", msg),
     }
 }
 
@@ -30,7 +30,7 @@ pub async fn attach_mpv_to_window(
     {
         use std::sync::mpsc;
 
-        println!("[player:rust] attach_mpv_to_window called with ptr={}, dispatching to main thread", mpv_window_ptr);
+        log::debug!("[player] attach_mpv_to_window called with ptr={}, dispatching to main thread", mpv_window_ptr);
 
         let (tx, rx) = mpsc::channel();
         let app_handle = app.clone();
@@ -129,7 +129,7 @@ fn do_attach_mpv_macos(app: tauri::AppHandle, mpv_window_ptr: i64) -> Result<(),
     use objc2_app_kit::{NSView, NSWindow, NSWindowOrderingMode, NSWindowStyleMask};
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
-    println!("[player:rust] do_attach_mpv_macos running on main thread, ptr={}", mpv_window_ptr);
+    log::debug!("[player] do_attach_mpv_macos running on main thread, ptr={}", mpv_window_ptr);
 
     // Get the Tauri main window
     let tauri_window = app
@@ -159,13 +159,13 @@ fn do_attach_mpv_macos(app: tauri::AppHandle, mpv_window_ptr: i64) -> Result<(),
         Retained::retain(ptr).ok_or("Failed to retain mpv NSWindow")?
     };
 
-    println!("[player:rust] Setting style mask to Borderless...");
+    log::debug!("[player] Setting style mask to Borderless...");
 
     // Make mpv window borderless (remove title bar)
     mpv_ns_window.setStyleMask(NSWindowStyleMask::Borderless);
     mpv_ns_window.setHasShadow(false);
 
-    println!("[player:rust] Adding mpv as child window...");
+    log::debug!("[player] Adding mpv as child window...");
 
     // Add mpv window as child of Tauri window
     unsafe {
@@ -184,7 +184,7 @@ fn do_attach_mpv_macos(app: tauri::AppHandle, mpv_window_ptr: i64) -> Result<(),
     );
     mpv_ns_window.setFrame_display(initial_frame, false);
 
-    println!("[player:rust] mpv window attached (hidden, awaiting resize)");
+    log::info!("[player] mpv window attached (hidden, awaiting resize)");
     Ok(())
 }
 
@@ -262,7 +262,7 @@ fn do_hide_mpv_macos(app: tauri::AppHandle) -> Result<(), String> {
         for i in 0..count {
             let child = children.objectAtIndex(i);
             if child.styleMask().contains(NSWindowStyleMask::Borderless) {
-                println!("[player:rust] Hiding mpv window via orderOut");
+                log::debug!("[player] Hiding mpv window via orderOut");
                 child.orderOut(None);
                 break;
             }

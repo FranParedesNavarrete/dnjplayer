@@ -12,12 +12,9 @@
     "core:window:allow-set-fullscreen",
     "sql:default",
     "sql:allow-load",
-    "sql:allow-execute",
     "sql:allow-select",
+    "sql:allow-execute",
     "sql:allow-close",
-    "shell:allow-execute",
-    "shell:allow-spawn",
-    "shell:allow-stdin-write",
     "fs:default",
     "notification:default",
     "libmpv:default"

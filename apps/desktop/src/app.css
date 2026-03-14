@@ -14,6 +14,7 @@ html.dark {
 	--warning: #d29922;
 	--danger: #f85149;
 	--sidebar-width: 220px;
+	--sidebar-collapsed-width: 56px;
 }
 
 /* Light theme */
@@ -31,6 +32,7 @@ html.light {
 	--warning: #9a6700;
 	--danger: #cf222e;
 	--sidebar-width: 220px;
+	--sidebar-collapsed-width: 56px;
 }
 
 * {

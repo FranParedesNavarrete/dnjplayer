@@ -43,6 +43,7 @@ export const es: Record<string, string> = {
 	'browser.noFiles': 'No se encontraron archivos en este directorio.',
 	'browser.goUp': 'Subir',
 	'browser.play': 'Reproducir',
+	'browser.watched': 'Visto',
 
 	// Reproductor
 	'player.placeholder': 'Selecciona un video desde Explorar para empezar a reproducir',

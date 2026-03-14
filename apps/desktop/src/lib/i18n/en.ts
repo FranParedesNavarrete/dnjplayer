@@ -43,6 +43,7 @@ export const en: Record<string, string> = {
 	'browser.noFiles': 'No files found in this directory.',
 	'browser.goUp': 'Go up',
 	'browser.play': 'Play',
+	'browser.watched': 'Watched',
 
 	// Player
 	'player.placeholder': 'Select a video from Browse to start playing',

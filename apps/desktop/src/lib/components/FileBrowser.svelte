@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { megaListFiles, megaGetWebdavUrl, megaListShares } from '$lib/services/mega-service';
 	import { loadVideo } from '$lib/services/player-service';
+	import { markWatched, getWatchedPaths } from '$lib/services/db-service';
 	import { log } from '$lib/log';
 	import { currentPath, entries, isLoading, megaError } from '$lib/stores/mega';
 	import type { MegaEntry } from '$lib/types/mega';
 	import type { MegaShare } from '$lib/types/mega';
-	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users } from 'lucide-svelte';
+	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users, Check } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 
 	const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.webm', '.mov', '.flv', '.wmv', '.m4v', '.ts'];
@@ -22,6 +24,15 @@
 	let error = $state('');
 	let activeTab = $state<SectionId>('cloud');
 	let shares = $state<MegaShare[]>([]);
+	let watchedPaths = $state<Set<string>>(new Set());
+
+	onMount(async () => {
+		try {
+			watchedPaths = await getWatchedPaths();
+		} catch (e) {
+			log.warn('[FileBrowser] Failed to load watched paths:', e);
+		}
+	});
 
 	// Determine if we're browsing inside a share (path starts with //from/)
 	let isInsideShare = $derived($currentPath.startsWith('//from/'));
@@ -119,9 +130,12 @@
 		try {
 			log.info('[FileBrowser] Getting WebDAV URL for:', entry.path);
 			const url = await megaGetWebdavUrl(entry.path);
-			log.info('[FileBrowser] WebDAV URL:', url);
 			log.info('[FileBrowser] Calling loadVideo...');
 			await loadVideo(url, entry.name);
+			// Mark as watched in SQLite
+			markWatched(entry.path, entry.name).then(() => {
+				watchedPaths = new Set([...watchedPaths, entry.path]);
+			}).catch((e) => log.warn('[FileBrowser] Failed to mark watched:', e));
 			log.info('[FileBrowser] loadVideo completed, navigating to /player');
 			goto('/player');
 		} catch (e) {
@@ -266,6 +280,11 @@
 						{/if}
 					</span>
 					<span class="entry-name">{entry.name}</span>
+					{#if watchedPaths.has(entry.path)}
+						<span class="watched-badge" title={$t['browser.watched']}>
+							<Check size={14} strokeWidth={2.5} />
+						</span>
+					{/if}
 					<span class="entry-size">{entry.size}</span>
 					{#if isVideo(entry.name)}
 						<span class="play-badge">{$t['browser.play']}</span>
@@ -509,6 +528,13 @@
 		background: var(--bg-tertiary);
 		padding: 2px 8px;
 		border-radius: 4px;
+		flex-shrink: 0;
+	}
+
+	.watched-badge {
+		display: flex;
+		align-items: center;
+		color: var(--success);
 		flex-shrink: 0;
 	}
 
