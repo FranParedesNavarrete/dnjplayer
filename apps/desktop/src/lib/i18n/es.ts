@@ -53,6 +53,7 @@ export const es: Record<string, string> = {
 	'player.stop': 'Detener',
 	'player.subsOff': 'Sin subs',
 	'player.subtitles': 'Subtitulos',
+	'player.audio': 'Audio',
 	'player.mute': 'Silenciar',
 	'player.unmute': 'Activar sonido',
 	'player.fullscreen': 'Pantalla completa (F)',

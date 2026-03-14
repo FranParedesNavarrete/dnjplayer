@@ -21,6 +21,8 @@ import {
 	speed,
 	subtitleTracks,
 	currentSubtitleId,
+	audioTracks,
+	currentAudioId,
 	brightness,
 	contrast,
 	saturation,
@@ -29,6 +31,7 @@ import {
 } from '$lib/stores/player';
 import { playerActive, currentVideoUrl, currentVideoTitle } from '$lib/stores/player-ui';
 import type { VideoAdjustments, ShaderMode } from '$lib/types/player';
+import { log } from '$lib/log';
 
 // Observable properties for mpv
 const OBSERVED_PROPERTIES = [
@@ -52,10 +55,12 @@ const MPV_CONFIG: MpvConfig = {
 		'osc': 'no',
 		'input-default-bindings': 'no',
 		'input-vo-keyboard': 'no',
-		// On Windows, prevent the plugin from injecting --wid (which embeds mpv inside WebView2,
-		// causing the video to be hidden behind the opaque webview). Instead, let mpv create its
-		// own window and we'll reparent it as a child window via Win32 API.
-		...(isWindows ? { 'wid': '', 'force-window': 'yes' } : {}),
+		// On macOS/Windows, mpv must create its own separate window so we can attach it
+		// as a child/owned window of the Tauri window via native APIs.
+		// 'force-window' ensures mpv creates a window; on Windows we also override 'wid'
+		// to prevent the plugin from injecting --wid (which would embed behind the webview).
+		...((isMacOS || isWindows) ? { 'force-window': 'yes' } : {}),
+		...(isWindows ? { 'wid': '' } : {}),
 	},
 	observedProperties: OBSERVED_PROPERTIES,
 };
@@ -70,7 +75,14 @@ let mpvWindowAttached = false;
 export async function initPlayer(): Promise<void> {
 	if (initialized) return;
 
-	await init(MPV_CONFIG);
+	log.info('[player] Initializing mpv with config:', JSON.stringify(MPV_CONFIG.initialOptions));
+	try {
+		await init(MPV_CONFIG);
+	} catch (e) {
+		log.error('[player] init() FAILED:', e);
+		throw e;
+	}
+	log.info('[player] mpv initialized successfully');
 	initialized = true;
 
 	unlistenProperties = await observeProperties(
@@ -124,34 +136,86 @@ export async function destroyPlayer(): Promise<void> {
  * Load a video file from a URL (WebDAV or local path).
  */
 export async function loadVideo(url: string, title?: string): Promise<void> {
-	if (!initialized) await initPlayer();
-	await command('loadfile', [url]);
+	log.info('[player] loadVideo called:', { url, title, initialized, isMacOS, isWindows });
+
+	if (!initialized) {
+		log.info('[player] Not initialized, calling initPlayer...');
+		await initPlayer();
+	}
+
+	log.info('[player] Sending loadfile command...');
+	try {
+		await command('loadfile', [url]);
+	} catch (e) {
+		log.error('[player] loadfile command FAILED:', e);
+		throw e;
+	}
+	log.info('[player] loadfile command succeeded');
+
+	// Start paused so the user decides when to play
+	await setProperty('pause', 'yes');
+
 	currentVideoUrl.set(url);
 	currentVideoTitle.set(title ?? null);
 	playerActive.set(true);
 
-	// On macOS/Windows, mpv creates a separate window. Attach it as a child of the Tauri window.
+	// On macOS/Windows, mpv creates a separate window. Attach it as a child of the Tauri window
+	// so it appears inside the app's player area instead of as a floating window.
 	if ((isMacOS || isWindows) && !mpvWindowAttached) {
-		// Wait for mpv to create its window
-		await new Promise((r) => setTimeout(r, 500));
-		try {
-			const windowId = await getProperty('window-id', 'int64');
-			if (windowId && typeof windowId === 'number' && windowId !== 0) {
-				await invoke('attach_mpv_to_window', { mpvWindowPtr: windowId });
-				mpvWindowAttached = true;
-				console.debug('[player] mpv window attached as child, window-id:', windowId);
-			}
-		} catch (e) {
-			console.warn('[player] Failed to attach mpv window:', e);
-		}
+		log.info('[player] Starting mpv window attach...');
+		await attachMpvWindow();
+		log.info('[player] attachMpvWindow done, attached:', mpvWindowAttached);
 	}
 
-	// Fetch subtitle tracks after video loads
-	setTimeout(() => getSubtitleTracks(), 1000);
+	// Fetch audio and subtitle tracks after video loads
+	setTimeout(() => fetchTracks(), 1000);
 }
 
 /**
- * Resize/reposition the mpv overlay window (macOS only).
+ * Try to get mpv's native window pointer with retries.
+ * mpv may take some time to create its window after loadfile.
+ */
+async function attachMpvWindow(): Promise<void> {
+	const MAX_ATTEMPTS = 10;
+	const POLL_INTERVAL = 300; // ms
+
+	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+		await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+		try {
+			const raw = await getProperty('window-id', 'int64');
+			// Handle all possible return types: number, BigInt, string
+			let windowId: number;
+			if (typeof raw === 'number') {
+				windowId = raw;
+			} else if (typeof raw === 'bigint') {
+				windowId = Number(raw);
+			} else if (typeof raw === 'string' && raw !== '') {
+				windowId = parseInt(raw, 10);
+			} else {
+				log.debug(`[player] window-id attempt ${attempt}/${MAX_ATTEMPTS}: got ${typeof raw} = ${raw}`);
+				continue;
+			}
+
+			if (!windowId || windowId === 0 || isNaN(windowId)) {
+				log.debug(`[player] window-id attempt ${attempt}/${MAX_ATTEMPTS}: invalid value ${windowId}`);
+				continue;
+			}
+
+			await invoke('attach_mpv_to_window', { mpvWindowPtr: windowId });
+			mpvWindowAttached = true;
+			log.debug('[player] mpv window attached as child, window-id:', windowId, `(attempt ${attempt})`);
+			return;
+		} catch (e) {
+			log.warn(`[player] attach attempt ${attempt}/${MAX_ATTEMPTS} failed:`, e);
+			if (attempt === MAX_ATTEMPTS) {
+				log.error('[player] Could not attach mpv window after all attempts');
+			}
+		}
+	}
+}
+
+/**
+ * Resize/reposition the mpv child window to match the video area.
  * Called by Player.svelte's ResizeObserver when the video area changes.
  */
 export async function resizeMpvOverlay(x: number, y: number, width: number, height: number): Promise<void> {
@@ -159,7 +223,20 @@ export async function resizeMpvOverlay(x: number, y: number, width: number, heig
 	try {
 		await invoke('resize_mpv_window', { x, y, width, height });
 	} catch (e) {
-		console.warn('[player] Failed to resize mpv window:', e);
+		log.warn('[player] Failed to resize mpv window:', e);
+	}
+}
+
+/**
+ * Hide the mpv child window (set to 1x1 at origin).
+ * Used when stopping or navigating away from the player.
+ */
+export async function hideMpvOverlay(): Promise<void> {
+	if (!(isMacOS || isWindows)) return;
+	try {
+		await invoke('resize_mpv_window', { x: 0, y: 0, width: 1, height: 1 });
+	} catch (e) {
+		// Silently ignore — window may already be gone
 	}
 }
 
@@ -168,6 +245,10 @@ export async function resizeMpvOverlay(x: number, y: number, width: number, heig
  */
 export async function stopVideo(): Promise<void> {
 	if (!initialized) return;
+	// Hide the mpv child window before clearing state
+	if ((isMacOS || isWindows) && mpvWindowAttached) {
+		await hideMpvOverlay();
+	}
 	await command('stop', []);
 	mpvWindowAttached = false;
 	playerActive.set(false);
@@ -178,11 +259,13 @@ export async function stopVideo(): Promise<void> {
 	filename.set(null);
 	subtitleTracks.set([]);
 	currentSubtitleId.set(0);
+	audioTracks.set([]);
+	currentAudioId.set(1);
 }
 
-// --- Subtitle tracks ---
+// --- Track fetching (audio + subtitle) ---
 
-export async function getSubtitleTracks(): Promise<void> {
+async function fetchTracks(): Promise<void> {
 	if (!initialized) return;
 	try {
 		const trackList = await getProperty('track-list', 'node');
@@ -195,12 +278,23 @@ export async function getSubtitleTracks(): Promise<void> {
 					lang: t.lang as string | undefined,
 				}));
 			subtitleTracks.set(subs);
+
+			const audio = trackList
+				.filter((t: any) => t.type === 'audio')
+				.map((t: any) => ({
+					id: t.id as number,
+					title: t.title as string | undefined,
+					lang: t.lang as string | undefined,
+				}));
+			audioTracks.set(audio);
 		} else {
 			subtitleTracks.set([]);
+			audioTracks.set([]);
 		}
 	} catch (e) {
-		console.warn('[player] Failed to get subtitle tracks:', e);
+		log.warn('[player] Failed to get tracks:', e);
 		subtitleTracks.set([]);
+		audioTracks.set([]);
 	}
 }
 
@@ -208,6 +302,12 @@ export async function setSubtitleTrack(id: number): Promise<void> {
 	if (!initialized) return;
 	await setProperty('sid', id === 0 ? 'no' : id);
 	currentSubtitleId.set(id);
+}
+
+export async function setAudioTrack(id: number): Promise<void> {
+	if (!initialized) return;
+	await setProperty('aid', id);
+	currentAudioId.set(id);
 }
 
 // --- Playback controls ---
@@ -325,12 +425,29 @@ export async function loadShaderPreset(mode: ShaderMode, shaderDir: string): Pro
 
 export async function toggleFullscreen(): Promise<void> {
 	const win = getCurrentWindow();
-	const isFs = await win.isFullscreen();
-	await win.setFullscreen(!isFs);
+	if (isMacOS) {
+		// On macOS with child NSWindow, native fullscreen (new Space) doesn't
+		// bring the child window along. Use maximize + decorations toggle instead.
+		const isMax = await win.isMaximized();
+		if (isMax) {
+			await win.unmaximize();
+			await win.setDecorations(true);
+		} else {
+			await win.setDecorations(false);
+			await win.maximize();
+		}
+	} else {
+		const isFs = await win.isFullscreen();
+		await win.setFullscreen(!isFs);
+	}
 }
 
 export async function isFullscreen(): Promise<boolean> {
-	return getCurrentWindow().isFullscreen();
+	const win = getCurrentWindow();
+	if (isMacOS) {
+		return win.isMaximized();
+	}
+	return win.isFullscreen();
 }
 
 export function isPlayerInitialized(): boolean {

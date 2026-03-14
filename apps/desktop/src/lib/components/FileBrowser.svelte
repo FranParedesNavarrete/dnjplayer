@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { megaListFiles, megaGetWebdavUrl, megaListShares } from '$lib/services/mega-service';
 	import { loadVideo } from '$lib/services/player-service';
+	import { log } from '$lib/log';
 	import { currentPath, entries, isLoading, megaError } from '$lib/stores/mega';
 	import type { MegaEntry } from '$lib/types/mega';
 	import type { MegaShare } from '$lib/types/mega';
@@ -116,10 +117,15 @@
 
 	async function playVideo(entry: MegaEntry) {
 		try {
+			log.info('[FileBrowser] Getting WebDAV URL for:', entry.path);
 			const url = await megaGetWebdavUrl(entry.path);
+			log.info('[FileBrowser] WebDAV URL:', url);
+			log.info('[FileBrowser] Calling loadVideo...');
 			await loadVideo(url, entry.name);
+			log.info('[FileBrowser] loadVideo completed, navigating to /player');
 			goto('/player');
 		} catch (e) {
+			log.error('[FileBrowser] playVideo failed:', e);
 			error = e instanceof Error ? e.message : String(e);
 		}
 	}

@@ -1,46 +1,47 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { resizeMpvOverlay } from '$lib/services/player-service';
+	import { resizeMpvOverlay, hideMpvOverlay } from '$lib/services/player-service';
 	import { playerActive } from '$lib/stores/player-ui';
-	import { isPaused } from '$lib/stores/player';
 	import PlayerControls from './PlayerControls.svelte';
 	import { Play } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 
 	let videoAreaEl: HTMLDivElement;
-	let resizeObserver: ResizeObserver | null = null;
+	let rafId: number | null = null;
+	let lastRect = { x: 0, y: 0, w: 0, h: 0 };
 
-	function updateMpvPosition() {
-		if (!videoAreaEl) return;
-		const rect = videoAreaEl.getBoundingClientRect();
-		// Send position relative to Tauri window content area
-		resizeMpvOverlay(rect.x, rect.y, rect.width, rect.height);
+	/**
+	 * requestAnimationFrame loop that checks if the video area position/size
+	 * changed and calls resizeMpvOverlay when it does. This keeps the native
+	 * mpv child window perfectly in sync during window resize, layout shifts,
+	 * sidebar toggles, etc. — much more reliable than ResizeObserver + window
+	 * resize event alone.
+	 */
+	function syncMpvLoop() {
+		if (videoAreaEl && $playerActive) {
+			const rect = videoAreaEl.getBoundingClientRect();
+			if (
+				rect.x !== lastRect.x ||
+				rect.y !== lastRect.y ||
+				rect.width !== lastRect.w ||
+				rect.height !== lastRect.h
+			) {
+				lastRect = { x: rect.x, y: rect.y, w: rect.width, h: rect.height };
+				resizeMpvOverlay(rect.x, rect.y, rect.width, rect.height);
+			}
+		}
+		rafId = requestAnimationFrame(syncMpvLoop);
 	}
 
 	onMount(() => {
-		resizeObserver = new ResizeObserver(() => {
-			if ($playerActive) {
-				updateMpvPosition();
-			}
-		});
-		if (videoAreaEl) {
-			resizeObserver.observe(videoAreaEl);
-		}
-
-		// Also update on window resize/move
-		window.addEventListener('resize', updateMpvPosition);
+		rafId = requestAnimationFrame(syncMpvLoop);
 	});
 
 	onDestroy(() => {
-		resizeObserver?.disconnect();
-		window.removeEventListener('resize', updateMpvPosition);
+		if (rafId !== null) cancelAnimationFrame(rafId);
+		// Hide mpv when navigating away from the player page
+		hideMpvOverlay();
 	});
-
-	// Update position when player becomes active
-	$: if ($playerActive && videoAreaEl) {
-		// Small delay to let layout settle
-		setTimeout(updateMpvPosition, 100);
-	}
 </script>
 
 <div class="player-wrapper">
@@ -56,7 +57,7 @@
 		{/if}
 	</div>
 
-	<!-- Controls overlay -->
+	<!-- Controls bar below video -->
 	{#if $playerActive}
 		<PlayerControls />
 	{/if}
@@ -76,7 +77,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		border-radius: 8px;
+		border-radius: 8px 8px 0 0;
 		overflow: hidden;
 	}
 

@@ -4,6 +4,12 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-set-decorations",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-fullscreen",
     "sql:default",
     "sql:allow-load",
     "sql:allow-execute",
