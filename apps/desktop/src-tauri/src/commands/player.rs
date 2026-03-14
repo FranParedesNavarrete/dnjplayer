@@ -188,6 +188,90 @@ fn do_attach_mpv_macos(app: tauri::AppHandle, mpv_window_ptr: i64) -> Result<(),
     Ok(())
 }
 
+/// Hide the mpv child window completely (orderOut on macOS, ShowWindow(SW_HIDE) on Windows).
+/// This is the proper way to hide an NSWindow — setting it to 1x1 px is not sufficient.
+#[tauri::command]
+pub async fn hide_mpv_window(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::mpsc;
+
+        let (tx, rx) = mpsc::channel();
+        let app_handle = app.clone();
+
+        app.run_on_main_thread(move || {
+            let result = do_hide_mpv_macos(app_handle);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("Failed to dispatch to main thread: {}", e))?;
+
+        return rx
+            .recv()
+            .map_err(|e| format!("Channel receive error: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::Manager;
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+
+        let state = app.state::<crate::MpvWindowState>();
+        let hwnd_val = *state.hwnd.lock().map_err(|e| e.to_string())?;
+        if let Some(val) = hwnd_val {
+            let mpv_hwnd = HWND(val as *mut std::ffi::c_void);
+            unsafe { let _ = ShowWindow(mpv_hwnd, SW_HIDE); }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = app;
+        Ok(())
+    }
+}
+
+/// Helper to hide the mpv NSWindow on macOS using orderOut.
+#[cfg(target_os = "macos")]
+fn do_hide_mpv_macos(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    use raw_window_handle::HasWindowHandle;
+    use objc2_app_kit::{NSView, NSWindow, NSWindowStyleMask};
+
+    let tauri_window = app
+        .get_webview_window("main")
+        .ok_or("Could not find main window")?;
+
+    let handle = tauri_window
+        .window_handle()
+        .map_err(|e| format!("Failed to get window handle: {}", e))?;
+    let raw = handle.as_raw();
+    let tauri_ns_window: objc2::rc::Retained<NSWindow> = match raw {
+        raw_window_handle::RawWindowHandle::AppKit(appkit) => unsafe {
+            let ns_view_ptr = appkit.ns_view.as_ptr() as *const NSView;
+            let ns_view: &NSView = &*ns_view_ptr;
+            ns_view.window().ok_or("NSView has no window")?
+        },
+        _ => return Err("Not running on macOS".into()),
+    };
+
+    // Find the borderless child (mpv) and hide it with orderOut
+    if let Some(children) = tauri_ns_window.childWindows() {
+        let count = children.count();
+        for i in 0..count {
+            let child = children.objectAtIndex(i);
+            if child.styleMask().contains(NSWindowStyleMask::Borderless) {
+                println!("[player:rust] Hiding mpv window via orderOut");
+                child.orderOut(None);
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Resize/reposition the mpv child window to match the video area.
 /// Coordinates are relative to the Tauri window's content area (top-left origin).
 ///
@@ -317,6 +401,11 @@ fn do_resize_mpv_macos(
                     NSSize::new(width, height),
                 );
                 child.setFrame_display(new_frame, true);
+
+                // Ensure the window is visible (it may have been hidden via orderOut)
+                if !child.isVisible() {
+                    child.orderFront(None);
+                }
                 break;
             }
         }

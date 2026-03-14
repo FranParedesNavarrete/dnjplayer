@@ -222,13 +222,13 @@ export async function resizeMpvOverlay(x: number, y: number, width: number, heig
 }
 
 /**
- * Hide the mpv child window (set to 1x1 at origin).
+ * Hide the mpv child window completely (orderOut on macOS, SW_HIDE on Windows).
  * Used when stopping or navigating away from the player.
  */
 export async function hideMpvOverlay(): Promise<void> {
 	if (!(isMacOS || isWindows)) return;
 	try {
-		await invoke('resize_mpv_window', { x: 0, y: 0, width: 1, height: 1 });
+		await invoke('hide_mpv_window');
 	} catch (e) {
 		// Silently ignore — window may already be gone
 	}
@@ -239,13 +239,15 @@ export async function hideMpvOverlay(): Promise<void> {
  */
 export async function stopVideo(): Promise<void> {
 	if (!initialized) return;
-	// Hide the mpv child window before clearing state
-	if ((isMacOS || isWindows) && mpvWindowAttached) {
+	// Clear flags FIRST so the rAF loop stops resizing immediately
+	const wasAttached = mpvWindowAttached;
+	mpvWindowAttached = false;
+	playerActive.set(false);
+	// Now safely hide the mpv window
+	if ((isMacOS || isWindows) && wasAttached) {
 		await hideMpvOverlay();
 	}
 	await command('stop', []);
-	mpvWindowAttached = false;
-	playerActive.set(false);
 	currentVideoUrl.set(null);
 	currentVideoTitle.set(null);
 	currentTime.set(null);

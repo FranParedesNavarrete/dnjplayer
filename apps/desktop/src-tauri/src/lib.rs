@@ -58,6 +58,7 @@ pub fn run() {
             commands::player::js_log,
             commands::player::attach_mpv_to_window,
             commands::player::resize_mpv_window,
+            commands::player::hide_mpv_window,
         ])
         .setup(|_app| {
             // Start mega-cmd-server in background on app launch (non-blocking)
