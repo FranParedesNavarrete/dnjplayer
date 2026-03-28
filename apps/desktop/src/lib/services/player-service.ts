@@ -56,10 +56,11 @@ const MPV_CONFIG: MpvConfig = {
 		'input-vo-keyboard': 'no',
 		// On macOS/Windows, mpv must create its own separate window so we can attach it
 		// as a child/owned window of the Tauri window via native APIs.
-		// 'force-window' ensures mpv creates a window; on Windows we also override 'wid'
-		// to prevent the plugin from injecting --wid (which would embed behind the webview).
+		// 'force-window' ensures mpv creates a window; we override 'wid' to prevent
+		// the plugin from injecting the Tauri HWND (which would embed behind the webview).
+		// wid=0 means "no parent window" so mpv creates a standalone top-level window.
 		...((isMacOS || isWindows) ? { 'force-window': 'yes' } : {}),
-		...(isWindows ? { 'wid': '' } : {}),
+		...(isWindows ? { 'wid': 0 } : {}),
 	},
 	observedProperties: OBSERVED_PROPERTIES,
 };
