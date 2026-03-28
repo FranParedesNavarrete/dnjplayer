@@ -316,14 +316,21 @@ pub async fn resize_mpv_window(
         let hwnd_val = hwnd_val.ok_or("mpv window not attached")?;
         let mpv_hwnd = HWND(hwnd_val as *mut std::ffi::c_void);
 
+        // JS getBoundingClientRect() returns CSS pixels; Win32 SetWindowPos expects
+        // physical pixels. Multiply by the window's scale factor for HiDPI displays.
+        let scale = app
+            .get_webview_window("main")
+            .map(|w| w.scale_factor().unwrap_or(1.0))
+            .unwrap_or(1.0);
+
         unsafe {
             let _ = SetWindowPos(
                 mpv_hwnd,
                 HWND_TOP,
-                x as i32,
-                y as i32,
-                width as i32,
-                height as i32,
+                (x * scale) as i32,
+                (y * scale) as i32,
+                (width * scale) as i32,
+                (height * scale) as i32,
                 SWP_NOACTIVATE | SWP_NOZORDER,
             );
         }
