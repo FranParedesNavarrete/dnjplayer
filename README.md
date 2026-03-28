@@ -108,8 +108,25 @@ The app will open with the Tauri window. MEGAcmd must be installed — the app m
 
 ## Build for Production
 
+### macOS
+
 ```bash
-# Build distributable (frontend + Rust + bundle)
+# Build .app and .dmg with proper libmpv bundling
+cd apps/desktop
+pnpm tauri:build:macos
+```
+
+The build script handles copying `libmpv-wrapper.dylib` to the correct bundle location and setting up library search paths for the system-installed libmpv (via Homebrew).
+
+### Windows
+
+```bash
+pnpm tauri build
+```
+
+### Linux
+
+```bash
 pnpm tauri build
 ```
 
@@ -117,10 +134,9 @@ Output binaries:
 
 ```
 apps/desktop/src-tauri/target/release/bundle/
-├── dmg/        # macOS .dmg installer
-├── macos/      # macOS .app bundle
-├── msi/        # Windows .msi installer
+├── macos/      # macOS .app bundle + .dmg
 ├── nsis/       # Windows .exe installer
+├── msi/        # Windows .msi installer
 ├── deb/        # Linux .deb package
 └── appimage/   # Linux .AppImage
 ```
