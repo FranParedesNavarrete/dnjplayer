@@ -48,6 +48,9 @@ export const es: Record<string, string> = {
 	'browser.clearSelection': 'Limpiar',
 	'browser.selectedCount': '{count} seleccionados',
 	'browser.loadingFolders': 'Cargando contenido...',
+	'browser.loadingWebdav': 'Conectando a MEGA...',
+	'browser.loadingPlayer': 'Iniciando reproductor...',
+	'browser.loadingFile': 'Cargando archivo...',
 
 	// Reproductor
 	'player.placeholder': 'Selecciona un video desde Explorar para empezar a reproducir',

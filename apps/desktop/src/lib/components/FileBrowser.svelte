@@ -160,6 +160,7 @@
 	}
 
 	let loadingPlay = $state('');
+	let loadingStep = $state('');
 
 	async function playVideo(entry: MegaEntry) {
 		error = '';
@@ -168,10 +169,16 @@
 			playlist.set([{ megaPath: entry.path, name: entry.name }]);
 			playlistIndex.set(0);
 
+			loadingStep = $t['browser.loadingWebdav'];
 			log.info('[FileBrowser] Getting WebDAV URL for:', entry.path);
 			const url = await megaGetWebdavUrl(entry.path);
 			log.info('[FileBrowser] Got WebDAV URL:', url);
+
+			loadingStep = $t['browser.loadingPlayer'];
+			log.info('[FileBrowser] Initializing player...');
 			await loadVideo(url, entry.name);
+			log.info('[FileBrowser] Player ready, navigating...');
+
 			markWatched(entry.path, entry.name).then(() => {
 				watchedPaths = new Set([...watchedPaths, entry.path]);
 			}).catch((e) => log.warn('[FileBrowser] Failed to mark watched:', e));
@@ -181,6 +188,7 @@
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			loadingPlay = '';
+			loadingStep = '';
 		}
 	}
 
@@ -437,7 +445,7 @@
 						{/if}
 						<span class="entry-size">{entry.size}</span>
 						{#if loadingPlay === entry.name}
-							<span class="loading-badge">Loading...</span>
+							<span class="loading-badge">{loadingStep || $t['browser.loading']}</span>
 						{:else if isVideo(entry.name)}
 							<span class="play-badge">{$t['browser.play']}</span>
 						{/if}
