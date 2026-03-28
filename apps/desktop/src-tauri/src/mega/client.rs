@@ -1,4 +1,10 @@
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// Timeout for MEGAcmd commands (seconds).
+/// WebDAV serve can take a few seconds; 15s is generous but prevents infinite hangs.
+const COMMAND_TIMEOUT_SECS: u64 = 15;
 
 /// Return platform-specific candidate paths for a given MEGAcmd binary name.
 /// Tries PATH first, then known install locations per platform.
@@ -45,6 +51,7 @@ fn binary_candidates(binary: &str) -> Vec<String> {
 /// Execute a MEGAcmd command and return stdout.
 /// Uses `mega-exec` which communicates with the running mega-cmd-server.
 /// Tries platform-specific paths for binaries if PATH lookup fails.
+/// All commands have a 15-second timeout to prevent infinite hangs.
 pub fn exec(args: &[&str]) -> Result<String, String> {
     // Try mega-exec first (single binary that dispatches)
     let result = try_exec("mega-exec", args);
@@ -66,6 +73,7 @@ pub fn exec(args: &[&str]) -> Result<String, String> {
 }
 
 /// Try executing a binary with the given args, checking all platform-specific paths.
+/// Uses spawn + try_wait polling with a timeout instead of blocking .output().
 fn try_exec(binary: &str, args: &[&str]) -> Result<String, String> {
     let candidates = binary_candidates(binary);
     let mut last_err = format!(
@@ -74,16 +82,55 @@ fn try_exec(binary: &str, args: &[&str]) -> Result<String, String> {
     );
 
     for candidate in &candidates {
-        match Command::new(candidate).args(args).output() {
-            Ok(output) => {
-                if output.status.success() {
-                    return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    // MEGAcmd sometimes writes errors to stdout
-                    let msg = if stderr.is_empty() { stdout } else { stderr };
-                    return Err(format!("MEGAcmd error: {}", msg));
+        match Command::new(candidate)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(mut child) => {
+                let timeout = Duration::from_secs(COMMAND_TIMEOUT_SECS);
+                let start = Instant::now();
+
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            let mut stdout_buf = String::new();
+                            let mut stderr_buf = String::new();
+                            if let Some(mut out) = child.stdout.take() {
+                                let _ = out.read_to_string(&mut stdout_buf);
+                            }
+                            if let Some(mut err) = child.stderr.take() {
+                                let _ = err.read_to_string(&mut stderr_buf);
+                            }
+                            let stdout = stdout_buf.trim().to_string();
+                            let stderr = stderr_buf.trim().to_string();
+
+                            if status.success() {
+                                return Ok(stdout);
+                            } else {
+                                let msg = if stderr.is_empty() { stdout } else { stderr };
+                                return Err(format!("MEGAcmd error: {}", msg));
+                            }
+                        }
+                        Ok(None) => {
+                            // Still running — check timeout
+                            if start.elapsed() > timeout {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                return Err(format!(
+                                    "MEGAcmd command timed out after {}s: {} {}",
+                                    COMMAND_TIMEOUT_SECS,
+                                    candidate,
+                                    args.join(" ")
+                                ));
+                            }
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        Err(e) => {
+                            return Err(format!("Error waiting for '{}': {}", candidate, e));
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -110,8 +157,11 @@ pub fn is_available() -> bool {
     for candidate in &binary_candidates("mega-exec") {
         if Command::new(candidate)
             .arg("version")
-            .output()
-            .map(|o| o.status.success())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .and_then(|mut c| c.wait())
+            .map(|s| s.success())
             .unwrap_or(false)
         {
             return true;
@@ -120,8 +170,11 @@ pub fn is_available() -> bool {
     // Fallback: try mega-version with all platform paths
     for candidate in &binary_candidates("mega-version") {
         if Command::new(candidate)
-            .output()
-            .map(|o| o.status.success())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .and_then(|mut c| c.wait())
+            .map(|s| s.success())
             .unwrap_or(false)
         {
             return true;

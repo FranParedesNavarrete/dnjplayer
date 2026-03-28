@@ -10,7 +10,7 @@
 	import type { MegaEntry } from '$lib/types/mega';
 	import type { MegaShare } from '$lib/types/mega';
 	import type { PlaylistItem } from '$lib/types/player';
-	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users, Check, Square, CheckSquare, Play } from 'lucide-svelte';
+	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users, Check, Square, CheckSquare, Play, Loader2 } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 
 	const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.webm', '.mov', '.flv', '.wmv', '.m4v', '.ts'];
@@ -159,13 +159,18 @@
 		selectedPaths = next;
 	}
 
+	let loadingPlay = $state('');
+
 	async function playVideo(entry: MegaEntry) {
+		error = '';
+		loadingPlay = entry.name;
 		try {
 			playlist.set([{ megaPath: entry.path, name: entry.name }]);
 			playlistIndex.set(0);
 
 			log.info('[FileBrowser] Getting WebDAV URL for:', entry.path);
 			const url = await megaGetWebdavUrl(entry.path);
+			log.info('[FileBrowser] Got WebDAV URL:', url);
 			await loadVideo(url, entry.name);
 			markWatched(entry.path, entry.name).then(() => {
 				watchedPaths = new Set([...watchedPaths, entry.path]);
@@ -174,6 +179,8 @@
 		} catch (e) {
 			log.error('[FileBrowser] playVideo failed:', e);
 			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			loadingPlay = '';
 		}
 	}
 
@@ -402,11 +409,15 @@
 					<button
 						class="file-entry"
 						class:is-video={isVideo(entry.name)}
+						class:is-loading={loadingPlay === entry.name}
+						disabled={!!loadingPlay}
 						onclick={() => handleEntryClick(entry)}
 						onkeydown={(e) => handleEntryKeydown(e, entry)}
 					>
 						<span class="entry-icon" class:video-icon={isVideo(entry.name)}>
-							{#if isVideo(entry.name)}
+							{#if loadingPlay === entry.name}
+								<Loader2 size={16} strokeWidth={1.8} class="spin" />
+							{:else if isVideo(entry.name)}
 								<Film size={16} strokeWidth={1.8} />
 							{:else if isAudio(entry.name)}
 								<Music size={16} strokeWidth={1.8} />
@@ -425,7 +436,9 @@
 							</span>
 						{/if}
 						<span class="entry-size">{entry.size}</span>
-						{#if isVideo(entry.name)}
+						{#if loadingPlay === entry.name}
+							<span class="loading-badge">Loading...</span>
+						{:else if isVideo(entry.name)}
 							<span class="play-badge">{$t['browser.play']}</span>
 						{/if}
 					</button>
@@ -801,5 +814,26 @@
 
 	.file-entry:hover .play-badge {
 		opacity: 1;
+	}
+
+	.file-entry.is-loading {
+		opacity: 0.7;
+		pointer-events: none;
+	}
+
+	.loading-badge {
+		color: var(--text-secondary);
+		font-size: 0.7rem;
+		font-weight: 500;
+		flex-shrink: 0;
+	}
+
+	:global(.spin) {
+		animation: spin 1s linear infinite;
+	}
+
+	@keyframes spin {
+		from { transform: rotate(0deg); }
+		to { transform: rotate(360deg); }
 	}
 </style>
