@@ -50,6 +50,7 @@ LAUNCHER
 chmod +x "$BINARY"
 
 echo "==> Re-signing bundle..."
+xattr -cr "$APP"
 codesign --force --sign - "$DST"
 codesign --force --sign - "$BINARY-bin"
 codesign --force --sign - "$APP"
