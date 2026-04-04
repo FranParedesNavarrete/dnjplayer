@@ -27,9 +27,12 @@ import {
 } from '$lib/stores/player';
 import { get } from 'svelte/store';
 import { playerActive, currentVideoUrl, currentVideoTitle, playlist, playlistIndex } from '$lib/stores/player-ui';
-import type { VideoAdjustments, ShaderMode } from '$lib/types/player';
+import type { VideoAdjustments, ShaderMode, ShaderVariant } from '$lib/types/player';
 import { markWatched } from '$lib/services/db-service';
 import { megaGetWebdavUrl } from '$lib/services/mega-service';
+import { defaultShaderMode, defaultShaderVariant } from '$lib/stores/settings';
+import { activeShaderMode, shaderVariant as activeShaderVariant } from '$lib/stores/player';
+import { resolveResource } from '@tauri-apps/api/path';
 import { log } from '$lib/log';
 
 // Observable properties for mpv
@@ -167,6 +170,10 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 		log.info('[player] attachMpvWindow done, attached:', mpvWindowAttached);
 	}
 
+	// Apply Anime4K shaders based on user's saved preference (silently)
+	applyUserShaderPreset().catch((e) => {
+		log.warn('[player] Failed to apply shader preset:', e);
+	});
 }
 
 /**
@@ -333,43 +340,90 @@ export function getDefaultAdjustments(): VideoAdjustments {
 
 // --- Anime4K shaders ---
 
-const SHADER_PRESETS: Record<string, string[]> = {
+// Shader pipeline templates per mode. Entries with {V} get the variant substituted;
+// entries without {V} are variant-independent (shared across all quality levels).
+const SHADER_PIPELINES: Record<string, string[]> = {
 	A: [
 		'Anime4K_Clamp_Highlights.glsl',
-		'Anime4K_Restore_CNN_VL.glsl',
-		'Anime4K_Upscale_CNN_x2_VL.glsl',
+		'Anime4K_Restore_CNN_{V}.glsl',
+		'Anime4K_Upscale_CNN_x2_{V}.glsl',
 		'Anime4K_AutoDownscalePre_x2.glsl',
 		'Anime4K_AutoDownscalePre_x4.glsl',
 		'Anime4K_Upscale_CNN_x2_M.glsl',
 	],
 	B: [
 		'Anime4K_Clamp_Highlights.glsl',
-		'Anime4K_Restore_CNN_Soft_VL.glsl',
-		'Anime4K_Upscale_CNN_x2_VL.glsl',
+		'Anime4K_Restore_CNN_Soft_{V}.glsl',
+		'Anime4K_Upscale_CNN_x2_{V}.glsl',
 		'Anime4K_AutoDownscalePre_x2.glsl',
 		'Anime4K_AutoDownscalePre_x4.glsl',
 		'Anime4K_Upscale_CNN_x2_M.glsl',
 	],
 	C: [
 		'Anime4K_Clamp_Highlights.glsl',
-		'Anime4K_Upscale_Denoise_CNN_x2_VL.glsl',
+		'Anime4K_Upscale_Denoise_CNN_x2_{V}.glsl',
 		'Anime4K_AutoDownscalePre_x2.glsl',
 		'Anime4K_AutoDownscalePre_x4.glsl',
-		'Anime4K_Upscale_CNN_x2_VL.glsl',
+		'Anime4K_Upscale_CNN_x2_{V}.glsl',
 	],
 };
 
-export async function loadShaderPreset(mode: ShaderMode, shaderDir: string): Promise<void> {
-	if (!initialized) return;
-	await command('change-list', ['glsl-shaders', 'clr', '']);
-	if (mode === 'off') return;
+function getShaderFiles(mode: ShaderMode, variant: ShaderVariant): string[] {
+	const pipeline = SHADER_PIPELINES[mode];
+	if (!pipeline) return [];
+	return pipeline.map((s) => s.replace(/\{V\}/g, variant));
+}
 
-	const shaders = SHADER_PRESETS[mode];
-	if (!shaders) return;
-
-	for (const shader of shaders) {
-		await command('change-list', ['glsl-shaders', 'append', `${shaderDir}/${shader}`]);
+async function getShaderDir(): Promise<string> {
+	try {
+		return await resolveResource('shaders');
+	} catch {
+		// In dev mode, shaders are in the static directory served by Vite
+		return 'shaders';
 	}
+}
+
+export async function loadShaderPreset(mode: ShaderMode, variant: ShaderVariant, showOsd = true): Promise<void> {
+	if (!initialized) return;
+
+	if (mode === 'off') {
+		await setProperty('glsl-shaders', '');
+		activeShaderMode.set('off');
+		log.info('[player] Shaders disabled');
+		if (showOsd) await command('show-text', ['Anime4K: Off', '2000']).catch(() => {});
+		return;
+	}
+
+	const shaders = getShaderFiles(mode, variant);
+	if (shaders.length === 0) return;
+
+	const shaderDir = await getShaderDir();
+	log.info(`[player] Loading Anime4K shaders: mode=${mode}, variant=${variant}, dir=${shaderDir}`);
+
+	// Set all shaders in a single property update — no pause/resume needed.
+	// mpv recompiles the shader pipeline in one pass without freezing playback.
+	const separator = navigator.platform?.toLowerCase().includes('win') ? ';' : ':';
+	const shaderPaths = shaders.map((s) => `${shaderDir}/${s}`).join(separator);
+
+	try {
+		await setProperty('glsl-shaders', shaderPaths);
+		activeShaderMode.set(mode);
+		activeShaderVariant.set(variant);
+		log.info(`[player] Anime4K shaders loaded: ${shaders.join(', ')}`);
+
+		if (showOsd) {
+			const modeLabels: Record<string, string> = { A: 'Type A (1080p)', B: 'Type B (720p)', C: 'Type C (480p)' };
+			await command('show-text', [`Anime4K: ${modeLabels[mode] ?? mode}`, '2000']).catch(() => {});
+		}
+	} catch (e) {
+		log.warn('[player] Failed to load shaders:', e);
+	}
+}
+
+async function applyUserShaderPreset(): Promise<void> {
+	const mode = get(defaultShaderMode);
+	const variant = get(defaultShaderVariant);
+	await loadShaderPreset(mode, variant, false); // silent on initial load
 }
 
 export async function toggleFullscreen(): Promise<void> {

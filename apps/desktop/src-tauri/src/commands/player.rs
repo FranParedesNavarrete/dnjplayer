@@ -57,7 +57,7 @@ pub async fn attach_mpv_to_window(
             GWL_EXSTYLE, GWL_STYLE,
             HWND_TOP, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_SHOWWINDOW,
             WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
-            WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT,
         };
 
         let mpv_hwnd = HWND(mpv_window_ptr as *mut std::ffi::c_void);
@@ -84,9 +84,9 @@ pub async fn attach_mpv_to_window(
                 (WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS).0 as isize
             );
 
-            // Set extended styles: tool window (no taskbar), no-activate
+            // Set extended styles: tool window (no taskbar), no-activate, transparent to mouse
             SetWindowLongPtrW(mpv_hwnd, GWL_EXSTYLE,
-                (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE).0 as isize
+                (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT).0 as isize
             );
 
             // Re-parent: make mpv a child of Tauri window
@@ -164,6 +164,10 @@ fn do_attach_mpv_macos(app: tauri::AppHandle, mpv_window_ptr: i64) -> Result<(),
     // Make mpv window borderless (remove title bar)
     mpv_ns_window.setStyleMask(NSWindowStyleMask::Borderless);
     mpv_ns_window.setHasShadow(false);
+
+    // Ignore mouse events so clicks pass through to the Tauri webview,
+    // keeping keyboard shortcuts working without focus loss.
+    mpv_ns_window.setIgnoresMouseEvents(true);
 
     log::debug!("[player] Adding mpv as child window...");
 

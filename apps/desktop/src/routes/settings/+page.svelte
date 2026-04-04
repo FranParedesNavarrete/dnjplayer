@@ -2,13 +2,13 @@
 	import { onMount } from 'svelte';
 	import { Cloud, Sparkles, Sun, Moon, Palette, Link } from 'lucide-svelte';
 	import { theme } from '$lib/stores/theme';
-	import { language } from '$lib/stores/settings';
+	import { language, defaultShaderMode, defaultShaderVariant } from '$lib/stores/settings';
 	import { isConnected, userEmail } from '$lib/stores/mega';
 	import { megaCheckStatus } from '$lib/services/mega-service';
 	import { t } from '$lib/i18n';
+	import type { ShaderMode, ShaderVariant } from '$lib/types/player';
 
 	onMount(() => {
-		// Refresh Mega connection status when visiting settings
 		megaCheckStatus().then((status) => {
 			isConnected.set(status.logged_in);
 			if (status.email) userEmail.set(status.email);
@@ -18,6 +18,16 @@
 	function handleLanguageChange(e: Event) {
 		const target = e.target as HTMLSelectElement;
 		language.set(target.value as 'en' | 'es');
+	}
+
+	function handleShaderModeChange(e: Event) {
+		const target = e.target as HTMLSelectElement;
+		defaultShaderMode.set(target.value as ShaderMode);
+	}
+
+	function handleShaderVariantChange(e: Event) {
+		const target = e.target as HTMLSelectElement;
+		defaultShaderVariant.set(target.value as ShaderVariant);
 	}
 </script>
 
@@ -104,7 +114,7 @@
 			</div>
 			<div class="setting-row">
 				<span class="setting-label">{$t['settings.shaderMode']}</span>
-				<select class="setting-select">
+				<select class="setting-select" value={$defaultShaderMode} onchange={handleShaderModeChange}>
 					<option value="A">{$t['settings.modeA']}</option>
 					<option value="B">{$t['settings.modeB']}</option>
 					<option value="C">{$t['settings.modeC']}</option>
@@ -113,7 +123,8 @@
 			</div>
 			<div class="setting-row">
 				<span class="setting-label">{$t['settings.shaderVariant']}</span>
-				<select class="setting-select">
+				<select class="setting-select" value={$defaultShaderVariant} onchange={handleShaderVariantChange} disabled={$defaultShaderMode === 'off'}>
+					<option value="UL">{$t['settings.variantUL']}</option>
 					<option value="VL">{$t['settings.variantVL']}</option>
 					<option value="L">{$t['settings.variantL']}</option>
 					<option value="M">{$t['settings.variantM']}</option>

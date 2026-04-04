@@ -12,6 +12,7 @@
 		saturation
 	} from '$lib/stores/player';
 	import { currentVideoTitle, playlist, playlistIndex } from '$lib/stores/player-ui';
+	import { defaultShaderMode, defaultShaderVariant } from '$lib/stores/settings';
 	import {
 		togglePause,
 		seek,
@@ -21,12 +22,15 @@
 		setMute,
 		stopVideo,
 		toggleFullscreen,
+		isFullscreen,
 		setVideoAdjustment,
 		resetVideoAdjustments,
+		loadShaderPreset,
 		playNext,
 		playPrev,
 		checkAutoAdvance
 	} from '$lib/services/player-service';
+	import { get } from 'svelte/store';
 	import {
 		Play,
 		Pause,
@@ -42,6 +46,7 @@
 		ChevronDown
 	} from 'lucide-svelte';
 	import { t } from '$lib/i18n';
+	import type { ShaderMode } from '$lib/types/player';
 
 	let hasPrev = $derived($playlistIndex > 0);
 	let hasNext = $derived($playlistIndex < $playlist.length - 1);
@@ -100,6 +105,12 @@
 		isFs = !isFs;
 	}
 
+	async function switchShaderMode(mode: ShaderMode) {
+		defaultShaderMode.set(mode);
+		const variant = get(defaultShaderVariant);
+		await loadShaderPreset(mode, variant);
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
 
@@ -142,7 +153,71 @@
 				e.preventDefault();
 				break;
 			case 'Escape':
-				if (isFs) handleFullscreen();
+				isFullscreen().then((fs) => { if (fs) handleFullscreen(); });
+				break;
+
+			// Contrast: 1 / 2
+			case '1':
+				setVideoAdjustment('contrast', Math.max($contrast - 5, -100));
+				e.preventDefault();
+				break;
+			case '2':
+				setVideoAdjustment('contrast', Math.min($contrast + 5, 100));
+				e.preventDefault();
+				break;
+
+			// Brightness: 3 / 4
+			case '3':
+				setVideoAdjustment('brightness', Math.min($brightness + 5, 100));
+				e.preventDefault();
+				break;
+			case '4':
+				setVideoAdjustment('brightness', Math.max($brightness - 5, -100));
+				e.preventDefault();
+				break;
+
+			// Saturation: 7 / 8
+			case '7':
+				setVideoAdjustment('saturation', Math.max($saturation - 5, -100));
+				e.preventDefault();
+				break;
+			case '8':
+				setVideoAdjustment('saturation', Math.min($saturation + 5, 100));
+				e.preventDefault();
+				break;
+
+			// Anime4K shader modes: Shift + 1/2/3/0
+			case '!':
+				switchShaderMode('A');
+				e.preventDefault();
+				break;
+			case '@':
+				switchShaderMode('B');
+				e.preventDefault();
+				break;
+			case '#':
+				switchShaderMode('C');
+				e.preventDefault();
+				break;
+			case ')':
+				switchShaderMode('off');
+				e.preventDefault();
+				break;
+
+			// Playback speed: [ / ]
+			case '[':
+				setSpeed(Math.max(($speedStore ?? 1.0) - 0.25, 0.25));
+				e.preventDefault();
+				break;
+			case ']':
+				setSpeed(Math.min(($speedStore ?? 1.0) + 0.25, 2.0));
+				e.preventDefault();
+				break;
+
+			// Reset all adjustments
+			case 'r':
+				resetVideoAdjustments();
+				e.preventDefault();
 				break;
 		}
 	}

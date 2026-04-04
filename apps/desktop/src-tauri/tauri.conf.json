@@ -35,7 +35,8 @@
       "icons/icon.png"
     ],
     "resources": [
-      "lib/**/*"
+      "lib/**/*",
+      "../static/shaders/**/*"
     ]
   }
 }
