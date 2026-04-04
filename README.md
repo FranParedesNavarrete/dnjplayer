@@ -187,6 +187,15 @@ dnjplayer/
 | `M` | Toggle mute |
 | `F` | Toggle fullscreen |
 | `Escape` | Exit fullscreen |
+| `N` | Next in playlist |
+| `P` | Previous in playlist |
+| `1` / `2` | Contrast down / up |
+| `3` / `4` | Brightness up / down |
+| `7` / `8` | Saturation down / up |
+| `[` / `]` | Speed down / up (0.25x steps, 0.25x–2x) |
+| `R` | Reset all video adjustments |
+| `Shift+1` / `Shift+2` / `Shift+3` | Anime4K Mode A (1080p) / B (720p) / C (480p) |
+| `Shift+0` | Disable Anime4K shaders |
 
 ## Anime4K Modes
 

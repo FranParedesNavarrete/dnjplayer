@@ -100,6 +100,7 @@ export const en: Record<string, string> = {
 	'settings.modeB': 'Mode B (720p)',
 	'settings.modeC': 'Mode C (480p)',
 	'settings.modeOff': 'Off',
+	'settings.variantUL': 'Ultra Large (maximum quality)',
 	'settings.variantVL': 'Very Large (best quality)',
 	'settings.variantL': 'Large',
 	'settings.variantM': 'Medium (balanced)',
