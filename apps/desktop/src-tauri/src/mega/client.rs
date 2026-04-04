@@ -3,8 +3,9 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Timeout for MEGAcmd commands (seconds).
-/// WebDAV serve can take a few seconds; 15s is generous but prevents infinite hangs.
-const COMMAND_TIMEOUT_SECS: u64 = 15;
+/// Large shared folders can take a while to list; 60s prevents infinite hangs
+/// while giving enough time for big directory listings.
+const COMMAND_TIMEOUT_SECS: u64 = 60;
 
 /// Return platform-specific candidate paths for a given MEGAcmd binary name.
 /// Tries PATH first, then known install locations per platform.
@@ -51,7 +52,7 @@ fn binary_candidates(binary: &str) -> Vec<String> {
 /// Execute a MEGAcmd command and return stdout.
 /// Uses `mega-exec` which communicates with the running mega-cmd-server.
 /// Tries platform-specific paths for binaries if PATH lookup fails.
-/// All commands have a 15-second timeout to prevent infinite hangs.
+/// All commands have a 60-second timeout to prevent infinite hangs.
 pub fn exec(args: &[&str]) -> Result<String, String> {
     // Try mega-exec first (single binary that dispatches)
     let result = try_exec("mega-exec", args);

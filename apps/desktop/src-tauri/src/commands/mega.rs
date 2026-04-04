@@ -93,8 +93,19 @@ pub async fn mega_whoami() -> Result<MegaUser, String> {
 
 #[tauri::command]
 pub async fn mega_list_files(path: String) -> Result<Vec<MegaEntry>, String> {
-    let output = client::exec(&["ls", "-l", &path])?;
+    // Try fast listing first (no metadata), fall back to detailed listing.
+    // Plain `ls` is much faster for large shared folders because it skips
+    // fetching size/date metadata for every entry.
+    let output = match client::exec(&["ls", &path]) {
+        Ok(out) => out,
+        Err(_) => {
+            // Fallback to ls -l if plain ls fails for some reason
+            client::exec(&["ls", "-l", &path])?
+        }
+    };
+
     let mut entries = Vec::new();
+    let is_long_format = output.contains("FLAGS") && output.contains("VERS");
 
     for line in output.lines() {
         let line = line.trim();
@@ -102,54 +113,94 @@ pub async fn mega_list_files(path: String) -> Result<Vec<MegaEntry>, String> {
             continue;
         }
 
-        // Skip column header line (e.g., "FLAGS VERS SIZE DATE NAME")
-        if line.contains("FLAGS") && line.contains("VERS") {
-            continue;
-        }
-
-        // Skip path header line (shared folders output: "//from/user:Folder/Sub:")
+        // Skip path header lines (shared folders output: "//from/user@email.com:Folder/Sub:")
+        // These end with ':' or '/:' and typically start with '/' or '//'
         if line.ends_with(':') {
             continue;
         }
 
-        // MEGAcmd ls -l format: FLAGS VERS SIZE DATE TIME NAME
-        // Folders: dep-  -  -  09Nov2022 13:55:19 foldername
-        // Files:   ----  1  999467  23Feb2022 02:35:06 filename.ext
-        let tokens: Vec<&str> = line.split_whitespace().collect();
-        if tokens.len() < 6 {
-            continue;
-        }
+        if is_long_format {
+            // ls -l format: FLAGS VERS SIZE DATE TIME NAME
+            if line.contains("FLAGS") && line.contains("VERS") {
+                continue;
+            }
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            if tokens.len() < 6 {
+                continue;
+            }
 
-        let size_str = tokens[2];
-        let is_folder = size_str == "-";
-        let name = tokens[5..].join(" ");
-        let clean_name = name.trim_end_matches('/').to_string();
+            let size_str = tokens[2];
+            let is_folder = size_str == "-";
+            let name = tokens[5..].join(" ");
+            let clean_name = name.trim_end_matches('/').to_string();
 
-        let full_path = if path.ends_with('/') {
-            format!("{}{}", path, &clean_name)
-        } else {
-            format!("{}/{}", path, &clean_name)
-        };
-
-        let display_size = if is_folder {
-            String::new()
-        } else {
-            format_size(size_str)
-        };
-
-        entries.push(MegaEntry {
-            name: clean_name,
-            path: full_path,
-            size: display_size,
-            entry_type: if is_folder {
-                "folder".to_string()
+            let full_path = if path.ends_with('/') {
+                format!("{}{}", path, &clean_name)
             } else {
-                "file".to_string()
-            },
-        });
+                format!("{}/{}", path, &clean_name)
+            };
+
+            let display_size = if is_folder {
+                String::new()
+            } else {
+                format_size(size_str)
+            };
+
+            entries.push(MegaEntry {
+                name: clean_name,
+                path: full_path,
+                size: display_size,
+                entry_type: if is_folder {
+                    "folder".to_string()
+                } else {
+                    "file".to_string()
+                },
+            });
+        } else {
+            // Plain ls format: names only. Folders may or may not have trailing '/'.
+            // Use heuristic: entries with a file extension (e.g. .mkv, .mp4, .srt)
+            // are files; everything else is a folder.
+            let clean_name = line.trim_end_matches('/').to_string();
+
+            if clean_name.is_empty() {
+                continue;
+            }
+
+            let has_trailing_slash = line.ends_with('/');
+            let is_folder = has_trailing_slash || !has_file_extension(&clean_name);
+
+            let full_path = if path.ends_with('/') {
+                format!("{}{}", path, &clean_name)
+            } else {
+                format!("{}/{}", path, &clean_name)
+            };
+
+            entries.push(MegaEntry {
+                name: clean_name,
+                path: full_path,
+                size: String::new(),
+                entry_type: if is_folder {
+                    "folder".to_string()
+                } else {
+                    "file".to_string()
+                },
+            });
+        }
     }
 
     Ok(entries)
+}
+
+/// Check if a filename has a file extension (e.g. .mkv, .mp4, .txt).
+/// Returns false for folder-like names without extensions.
+fn has_file_extension(name: &str) -> bool {
+    if let Some(dot_pos) = name.rfind('.') {
+        let ext = &name[dot_pos + 1..];
+        // Extension should be 1-10 alphanumeric chars (e.g. mkv, mp4, srt, tar, gz)
+        !ext.is_empty() && ext.len() <= 10 && ext.chars().all(|c| c.is_ascii_alphanumeric())
+    } else {
+        false
+    }
 }
 
 #[derive(Debug, Serialize)]
