@@ -105,4 +105,10 @@ export const en: Record<string, string> = {
 	'settings.variantL': 'Large',
 	'settings.variantM': 'Medium (balanced)',
 	'settings.variantS': 'Small (performance)',
+
+	// Player OSD
+	'player.osd.shaderA': 'Anime4K: Type A (1080p)',
+	'player.osd.shaderB': 'Anime4K: Type B (720p)',
+	'player.osd.shaderC': 'Anime4K: Type C (480p)',
+	'player.osd.shaderOff': 'Anime4K: Clear',
 };

@@ -21,6 +21,9 @@ export const hue = writable(0);
 export const activeShaderMode = writable<'A' | 'B' | 'C' | 'off'>('off');
 export const shaderVariant = writable<'S' | 'M' | 'L' | 'VL' | 'UL'>('VL');
 
+// OSD (on-screen display) message — shown briefly over the video
+export const osdMessage = writable<string | null>(null);
+
 // Derived
 export const progress = derived(
 	[currentTime, duration],

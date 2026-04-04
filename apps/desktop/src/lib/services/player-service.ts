@@ -383,15 +383,14 @@ async function getShaderDir(): Promise<string> {
 	}
 }
 
-export async function loadShaderPreset(mode: ShaderMode, variant: ShaderVariant): Promise<void> {
+export async function loadShaderPreset(mode: ShaderMode, variant: ShaderVariant, showOsd = true): Promise<void> {
 	if (!initialized) return;
 
-	// Clear all existing shaders
-	await command('change-list', ['glsl-shaders', 'clr', '']);
-
 	if (mode === 'off') {
+		await setProperty('glsl-shaders', '');
 		activeShaderMode.set('off');
 		log.info('[player] Shaders disabled');
+		if (showOsd) await command('show-text', ['Anime4K: Off', '2000']).catch(() => {});
 		return;
 	}
 
@@ -401,23 +400,30 @@ export async function loadShaderPreset(mode: ShaderMode, variant: ShaderVariant)
 	const shaderDir = await getShaderDir();
 	log.info(`[player] Loading Anime4K shaders: mode=${mode}, variant=${variant}, dir=${shaderDir}`);
 
-	for (const shader of shaders) {
-		try {
-			await command('change-list', ['glsl-shaders', 'append', `${shaderDir}/${shader}`]);
-		} catch (e) {
-			log.warn(`[player] Failed to load shader ${shader}:`, e);
-		}
-	}
+	// Set all shaders in a single property update — no pause/resume needed.
+	// mpv recompiles the shader pipeline in one pass without freezing playback.
+	const separator = navigator.platform?.toLowerCase().includes('win') ? ';' : ':';
+	const shaderPaths = shaders.map((s) => `${shaderDir}/${s}`).join(separator);
 
-	activeShaderMode.set(mode);
-	activeShaderVariant.set(variant);
-	log.info(`[player] Anime4K shaders loaded: ${shaders.join(', ')}`);
+	try {
+		await setProperty('glsl-shaders', shaderPaths);
+		activeShaderMode.set(mode);
+		activeShaderVariant.set(variant);
+		log.info(`[player] Anime4K shaders loaded: ${shaders.join(', ')}`);
+
+		if (showOsd) {
+			const modeLabels: Record<string, string> = { A: 'Type A (1080p)', B: 'Type B (720p)', C: 'Type C (480p)' };
+			await command('show-text', [`Anime4K: ${modeLabels[mode] ?? mode}`, '2000']).catch(() => {});
+		}
+	} catch (e) {
+		log.warn('[player] Failed to load shaders:', e);
+	}
 }
 
 async function applyUserShaderPreset(): Promise<void> {
 	const mode = get(defaultShaderMode);
 	const variant = get(defaultShaderVariant);
-	await loadShaderPreset(mode, variant);
+	await loadShaderPreset(mode, variant, false); // silent on initial load
 }
 
 export async function toggleFullscreen(): Promise<void> {
