@@ -8,9 +8,10 @@ Stream video from your Mega.io cloud storage with an embedded libmpv player and 
 
 - **Mega.io streaming** — Browse your cloud drive and shared folders, stream any video via WebDAV
 - **Embedded player** — libmpv-based playback with hardware decoding, integrated into the app window on macOS, Windows and Linux
-- **Anime4K upscaling** — Real-time GPU shaders (Mode A/B/C) optimized for different source resolutions
-- **Video adjustments** — Brightness, contrast and saturation controls with live preview
-- **Playback controls** — Speed (0.25×–2×), volume (0–150%), seek bar, fullscreen, keyboard shortcuts
+- **Anime4K upscaling** — Real-time GPU shaders (Mode A/B/C) with variant selection (S/M/L/VL/UL), switchable via keyboard shortcuts
+- **History & Favorites** — Track watched content with play counts, bookmark files and folders for quick access
+- **Video adjustments** — Brightness, contrast and saturation controls with live preview and keyboard shortcuts
+- **Playback controls** — Speed (0.25×–2×), volume (0–150%), seek bar, fullscreen, comprehensive keyboard shortcuts
 - **Dark & Light themes** — System-wide toggle with localStorage persistence
 - **Internationalization** — English and Spanish, extensible via `src/lib/i18n/`
 - **Pre-processing pipeline** — Optional Docker-based offline upscaling with FFmpeg + libplacebo + NVIDIA GPU
@@ -83,15 +84,16 @@ To enable real-time upscaling, download the Anime4K shader pack and place the `.
 
 ```bash
 # Download the latest release from https://github.com/bloc97/Anime4K/releases
-# Extract into the shaders directory
-unzip Anime4K_v4.0.1.zip -d apps/desktop/static/shaders/
+# Extract and move .glsl files directly into the shaders directory
+unzip Anime4K_v4.0.1.zip -d /tmp/anime4k
+mv /tmp/anime4k/**/*.glsl apps/desktop/static/shaders/
 ```
 
 ## Quick Start
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/dnjplayer.git
+git clone https://github.com/FranParedesNavarrete/dnjplayer.git
 cd dnjplayer
 
 # Install dependencies
@@ -147,7 +149,7 @@ apps/desktop/src-tauri/target/release/bundle/
 dnjplayer/
 ├── apps/desktop/                  # Tauri + SvelteKit application
 │   ├── src/                       # SvelteKit frontend
-│   │   ├── routes/                # Pages: /, /browse, /player, /queue, /settings
+│   │   ├── routes/                # Pages: /, /history, /browse, /player, /queue, /settings
 │   │   └── lib/
 │   │       ├── components/        # Player, PlayerControls, FileBrowser, AuthForm
 │   │       ├── stores/            # Svelte writable stores (player, mega, theme, settings)
@@ -172,6 +174,7 @@ dnjplayer/
 | Page | Route | Description |
 |------|-------|-------------|
 | **Library** | `/` | Saved and recently watched media |
+| **History** | `/history` | Watch history and favorites (with tabs) |
 | **Browse** | `/browse` | Mega.io cloud file browser with login |
 | **Player** | `/player` | Embedded video playback with controls |
 | **Queue** | `/queue` | Anime4K pre-processing job queue |
