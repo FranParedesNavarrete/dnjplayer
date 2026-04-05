@@ -30,6 +30,12 @@ pub fn run() {
             sql: include_str!("db/migrations/003_watched.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 4,
+            description: "create favorites table",
+            sql: include_str!("db/migrations/004_favorites.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

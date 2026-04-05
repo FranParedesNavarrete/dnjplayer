@@ -1,6 +1,7 @@
 export const es: Record<string, string> = {
 	// Navegacion
 	'nav.library': 'Biblioteca',
+	'nav.history': 'Historial',
 	'nav.browse': 'Explorar Mega',
 	'nav.player': 'Reproductor',
 	'nav.queue': 'Cola',
@@ -105,6 +106,24 @@ export const es: Record<string, string> = {
 	'settings.variantL': 'Grande',
 	'settings.variantM': 'Medio (equilibrado)',
 	'settings.variantS': 'Pequeno (rendimiento)',
+
+	// Pagina de historial
+	'history.title': 'Historial',
+	'history.subtitle': 'Tu contenido reproducido recientemente',
+	'history.tabHistory': 'Historial',
+	'history.tabFavorites': 'Favoritos',
+	'history.empty': 'Sin historial',
+	'history.emptyHint': 'Reproduce un video y aparecera aqui.',
+	'history.clearHistory': 'Borrar historial',
+	'history.clearConfirm': 'Borrar todo el historial?',
+	'history.playCount': '{count} reproducciones',
+	'history.removeFromHistory': 'Eliminar',
+	'history.favoritesEmpty': 'Sin favoritos',
+	'history.favoritesEmptyHint': 'Marca archivos o carpetas como favoritos mientras navegas.',
+	'history.removeFavorite': 'Eliminar',
+	'history.filter': 'Filtrar...',
+	'history.play': 'Reproducir',
+	'history.openFolder': 'Abrir',
 
 	// Player OSD
 	'player.osd.shaderA': 'Anime4K: Tipo A (1080p)',

@@ -236,7 +236,10 @@ pub async fn hide_mpv_window(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-/// Helper to hide the mpv NSWindow on macOS using orderOut.
+/// Helper to hide the mpv NSWindow on macOS.
+/// Uses setAlphaValue(0) to make the window fully transparent instead of
+/// orderOut (which detaches the child) or moving off-screen (which flickers).
+/// The window stays as a child, stays positioned, and becomes invisible instantly.
 #[cfg(target_os = "macos")]
 fn do_hide_mpv_macos(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
@@ -260,14 +263,13 @@ fn do_hide_mpv_macos(app: tauri::AppHandle) -> Result<(), String> {
         _ => return Err("Not running on macOS".into()),
     };
 
-    // Find the borderless child (mpv) and hide it with orderOut
     if let Some(children) = tauri_ns_window.childWindows() {
         let count = children.count();
         for i in 0..count {
             let child = children.objectAtIndex(i);
             if child.styleMask().contains(NSWindowStyleMask::Borderless) {
-                log::debug!("[player] Hiding mpv window via orderOut");
-                child.orderOut(None);
+                log::debug!("[player] Hiding mpv window (alpha=0)");
+                child.setAlphaValue(0.0);
                 break;
             }
         }
@@ -413,9 +415,9 @@ fn do_resize_mpv_macos(
                 );
                 child.setFrame_display(new_frame, true);
 
-                // Ensure the window is visible (it may have been hidden via orderOut)
-                if !child.isVisible() {
-                    child.orderFront(None);
+                // Restore visibility if hidden via setAlphaValue(0)
+                if child.alphaValue() < 1.0 {
+                    child.setAlphaValue(1.0);
                 }
                 break;
             }

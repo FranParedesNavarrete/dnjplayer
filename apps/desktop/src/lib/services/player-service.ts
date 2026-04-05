@@ -238,11 +238,27 @@ export async function resizeMpvOverlay(x: number, y: number, width: number, heig
  */
 export async function hideMpvOverlay(): Promise<void> {
 	if (!(isMacOS || isWindows)) return;
+	mpvWindowAttached = false;
 	try {
 		await invoke('hide_mpv_window');
 	} catch (e) {
 		// Silently ignore — window may already be gone
 	}
+}
+
+/**
+ * Re-show the mpv window after navigating back to the player page.
+ * The rAF loop in Player.svelte will call resizeMpvOverlay() which
+ * triggers the Rust side to re-show the hidden window (orderFront/ShowWindow).
+ */
+export function showMpvOverlay(): void {
+	if (!(isMacOS || isWindows)) return;
+	if (!initialized) return;
+	// Mark as attached so resizeMpvOverlay() sends position updates,
+	// which in turn re-show the hidden native window.
+	mpvWindowAttached = true;
+	// Force the rAF loop to send a resize on the next frame
+	// by invalidating the cached rect in Player.svelte (handled via the flag).
 }
 
 /**

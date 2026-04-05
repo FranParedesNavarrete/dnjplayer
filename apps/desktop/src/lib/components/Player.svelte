@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { resizeMpvOverlay, hideMpvOverlay } from '$lib/services/player-service';
+	import { resizeMpvOverlay, hideMpvOverlay, showMpvOverlay } from '$lib/services/player-service';
 	import { playerActive } from '$lib/stores/player-ui';
 	import { osdMessage } from '$lib/stores/player';
 	import PlayerControls from './PlayerControls.svelte';
@@ -53,6 +53,12 @@
 	}
 
 	onMount(() => {
+		// Re-show the mpv window if playback is active (e.g., navigated away and back)
+		if ($playerActive) {
+			showMpvOverlay();
+			// Invalidate cached rect so the next rAF frame sends a resize
+			lastRect = { x: 0, y: 0, w: 0, h: 0 };
+		}
 		rafId = requestAnimationFrame(syncMpvLoop);
 	});
 
