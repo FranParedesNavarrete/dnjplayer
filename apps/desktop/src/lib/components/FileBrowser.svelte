@@ -3,14 +3,14 @@
 	import { onMount } from 'svelte';
 	import { megaListFiles, megaGetWebdavUrl, megaListShares } from '$lib/services/mega-service';
 	import { loadVideo } from '$lib/services/player-service';
-	import { markWatched, getWatchedPaths } from '$lib/services/db-service';
+	import { markWatched, getWatchedPaths, getFavoritePaths, toggleFavorite } from '$lib/services/db-service';
 	import { log } from '$lib/log';
 	import { currentPath, entries, isLoading, megaError } from '$lib/stores/mega';
 	import { playlist, playlistIndex } from '$lib/stores/player-ui';
 	import type { MegaEntry } from '$lib/types/mega';
 	import type { MegaShare } from '$lib/types/mega';
 	import type { PlaylistItem } from '$lib/types/player';
-	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users, Check, Square, CheckSquare, Play, Loader2 } from 'lucide-svelte';
+	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users, Check, Square, CheckSquare, Play, Loader2, Heart } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 
 	const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.webm', '.mov', '.flv', '.wmv', '.m4v', '.ts'];
@@ -27,6 +27,7 @@
 	let activeTab = $state<SectionId>('cloud');
 	let shares = $state<MegaShare[]>([]);
 	let watchedPaths = $state<Set<string>>(new Set());
+	let favoritePaths = $state<Set<string>>(new Set());
 
 	// Selection state
 	let selectedPaths = $state<Set<string>>(new Set());
@@ -40,11 +41,25 @@
 
 	onMount(async () => {
 		try {
-			watchedPaths = await getWatchedPaths();
+			const [w, f] = await Promise.all([getWatchedPaths(), getFavoritePaths()]);
+			watchedPaths = w;
+			favoritePaths = f;
 		} catch (e) {
-			log.warn('[FileBrowser] Failed to load watched paths:', e);
+			log.warn('[FileBrowser] Failed to load watched/favorite paths:', e);
 		}
 	});
+
+	async function handleToggleFavorite(entry: MegaEntry) {
+		const entryType = entry.entry_type === 'folder' ? 'folder' : 'file';
+		const added = await toggleFavorite(entry.path, entry.name, entryType as 'file' | 'folder');
+		const next = new Set(favoritePaths);
+		if (added) {
+			next.add(entry.path);
+		} else {
+			next.delete(entry.path);
+		}
+		favoritePaths = next;
+	}
 
 	let isInsideShare = $derived($currentPath.startsWith('//from/'));
 
@@ -395,6 +410,13 @@
 						<span class="entry-name">{entry.name}</span>
 						<span class="entry-size">{entry.size}</span>
 					</button>
+					<button
+						class="fav-btn"
+						class:is-fav={favoritePaths.has(entry.path)}
+						onclick={(e) => { e.stopPropagation(); handleToggleFavorite(entry); }}
+					>
+						<Heart size={14} strokeWidth={1.8} />
+					</button>
 				</div>
 			{/each}
 			{#each files as entry (entry.path)}
@@ -449,6 +471,13 @@
 						{:else if isVideo(entry.name)}
 							<span class="play-badge">{$t['browser.play']}</span>
 						{/if}
+					</button>
+					<button
+						class="fav-btn"
+						class:is-fav={favoritePaths.has(entry.path)}
+						onclick={(e) => { e.stopPropagation(); handleToggleFavorite(entry); }}
+					>
+						<Heart size={14} strokeWidth={1.8} />
 					</button>
 				</div>
 			{/each}
@@ -834,6 +863,35 @@
 		font-size: 0.7rem;
 		font-weight: 500;
 		flex-shrink: 0;
+	}
+
+	.fav-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 36px;
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		cursor: pointer;
+		flex-shrink: 0;
+		border-radius: 4px;
+		transition: color 0.15s;
+		opacity: 0;
+	}
+
+	.file-entry-row:hover .fav-btn {
+		opacity: 1;
+	}
+
+	.fav-btn:hover {
+		color: #f85149;
+	}
+
+	.fav-btn.is-fav {
+		color: #f85149;
+		opacity: 1;
 	}
 
 	:global(.spin) {

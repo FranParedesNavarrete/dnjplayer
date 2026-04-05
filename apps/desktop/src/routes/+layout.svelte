@@ -7,7 +7,7 @@
 	import { megaCheckStatus } from '$lib/services/mega-service';
 	import { page } from '$app/stores';
 	import { t } from '$lib/i18n';
-	import { Library, CloudDownload, Zap, Settings, Play, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-svelte';
+	import { Library, Clock, CloudDownload, Zap, Settings, Play, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-svelte';
 
 	let { children } = $props();
 	let collapsed = $state(false);
@@ -38,6 +38,7 @@
 
 	const navItems = [
 		{ href: '/', labelKey: 'nav.library', icon: Library },
+		{ href: '/history', labelKey: 'nav.history', icon: Clock },
 		{ href: '/browse', labelKey: 'nav.browse', icon: CloudDownload },
 		{ href: '/player', labelKey: 'nav.player', icon: Play },
 		{ href: '/queue', labelKey: 'nav.queue', icon: Zap },
