@@ -406,12 +406,20 @@ fn do_resize_mpv_macos(
                 // Convert from webview top-left coords to macOS screen bottom-left coords.
                 // The content area's bottom-left in screen coords = window frame origin
                 // (the content view sits at the bottom of the window, title bar is at top).
-                let screen_x = tauri_frame.origin.x + x;
-                let screen_y = tauri_frame.origin.y + content_height - y - height;
+                //
+                // We snap all values to integer pixel boundaries to avoid subpixel
+                // rounding mismatches between the webview and the native NSWindow.
+                let snap_x = x.floor();
+                let snap_y = y.floor();
+                let snap_w = width.ceil();
+                let snap_h = height.ceil();
+
+                let screen_x = (tauri_frame.origin.x + snap_x).round();
+                let screen_y = (tauri_frame.origin.y + content_height - snap_y - snap_h).round();
 
                 let new_frame = NSRect::new(
                     NSPoint::new(screen_x, screen_y),
-                    NSSize::new(width, height),
+                    NSSize::new(snap_w, snap_h),
                 );
                 child.setFrame_display(new_frame, true);
 

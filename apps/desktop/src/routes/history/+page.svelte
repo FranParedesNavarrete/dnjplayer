@@ -94,7 +94,7 @@
 
 	function navigateToFolder(entry: FavoriteEntry) {
 		currentPath.set(entry.mega_path);
-		goto('/browse');
+		goto('/');
 	}
 
 	async function handleRemoveHistory(megaPath: string) {

@@ -74,7 +74,7 @@
 			</div>
 			<h3>{$t['queue.empty']}</h3>
 			<p>{$t['queue.emptyHint']}</p>
-			<a href="/browse" class="btn-primary">{$t['nav.browse']}</a>
+			<a href="/" class="btn-primary">{$t['nav.browse']}</a>
 		</div>
 	{:else}
 		<div class="queue-list">

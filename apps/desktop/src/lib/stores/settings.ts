@@ -69,3 +69,29 @@ function createShaderVariantStore() {
 
 export const defaultShaderMode = createShaderModeStore();
 export const defaultShaderVariant = createShaderVariantStore();
+
+// Player controls auto-hide delay (milliseconds). 0 = never hide.
+export const CONTROLS_HIDE_DELAYS = [0, 5000, 10000, 15000, 30000, 60000] as const;
+export type ControlsHideDelay = (typeof CONTROLS_HIDE_DELAYS)[number];
+
+function createControlsHideDelayStore() {
+	const stored = browser ? localStorage.getItem('dnjplayer-controls-delay') : null;
+	const parsed = stored ? parseInt(stored, 10) : 10000;
+	const initial: ControlsHideDelay = (CONTROLS_HIDE_DELAYS as readonly number[]).includes(parsed)
+		? (parsed as ControlsHideDelay)
+		: 10000;
+
+	const { subscribe, set } = writable<ControlsHideDelay>(initial);
+
+	return {
+		subscribe,
+		set(value: ControlsHideDelay) {
+			set(value);
+			if (browser) {
+				localStorage.setItem('dnjplayer-controls-delay', String(value));
+			}
+		},
+	};
+}
+
+export const controlsHideDelay = createControlsHideDelayStore();

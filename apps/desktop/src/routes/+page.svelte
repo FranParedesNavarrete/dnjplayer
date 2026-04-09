@@ -1,30 +1,74 @@
 <script lang="ts">
-	import { Clapperboard } from 'lucide-svelte';
+	import { onMount } from 'svelte';
+	import { megaCheckStatus, megaLogout } from '$lib/services/mega-service';
+	import { isConnected, userEmail, megaError } from '$lib/stores/mega';
+	import AuthForm from '$lib/components/AuthForm.svelte';
+	import FileBrowser from '$lib/components/FileBrowser.svelte';
 	import { t } from '$lib/i18n';
+
+	let checkingStatus = $state(true);
+
+	onMount(async () => {
+		try {
+			const status = await megaCheckStatus();
+			isConnected.set(status.logged_in);
+			userEmail.set(status.email);
+		} catch {
+			// MEGAcmd not available - stay disconnected
+		} finally {
+			checkingStatus = false;
+		}
+	});
+
+	async function handleLogout() {
+		try {
+			await megaLogout();
+			isConnected.set(false);
+			userEmail.set(null);
+		} catch (e) {
+			megaError.set(e instanceof Error ? e.message : String(e));
+		}
+	}
 </script>
 
-<div class="library-page">
+<div class="browse-page">
 	<div class="page-header">
-		<h2>{$t['library.title']}</h2>
-		<p class="subtitle">{$t['library.subtitle']}</p>
+		<div class="header-left">
+			<h2>{$t['browse.title']}</h2>
+			<p class="subtitle">{$t['browse.subtitle']}</p>
+		</div>
+		{#if $isConnected}
+			<div class="header-right">
+				<span class="user-email">{$userEmail}</span>
+				<button class="btn-secondary" onclick={handleLogout}>{$t['browse.signOut']}</button>
+			</div>
+		{/if}
 	</div>
 
-	<div class="empty-state">
-		<div class="empty-icon">
-			<Clapperboard size={48} strokeWidth={1.2} />
+	{#if checkingStatus}
+		<div class="loading-state">
+			<span class="spinner"></span>
+			<span>{$t['browse.checking']}</span>
 		</div>
-		<h3>{$t['library.empty']}</h3>
-		<p>{$t['library.emptyHint']}</p>
-		<a href="/browse" class="btn-primary">{$t['library.browseMega']}</a>
-	</div>
+	{:else if $isConnected}
+		<FileBrowser />
+	{:else}
+		<AuthForm />
+	{/if}
 </div>
 
 <style>
-	.library-page {
+	.browse-page {
 		max-width: 1200px;
+		height: 100%;
+		display: flex;
+		flex-direction: column;
 	}
 
 	.page-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
 		margin-bottom: 24px;
 	}
 
@@ -39,41 +83,53 @@
 		margin-top: 4px;
 	}
 
-	.empty-state {
+	.header-right {
 		display: flex;
-		flex-direction: column;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.user-email {
+		font-size: 0.8rem;
+		color: var(--text-secondary);
+	}
+
+	.btn-secondary {
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
+		border: 1px solid var(--border);
+		padding: 6px 14px;
+		border-radius: 6px;
+		font-size: 0.8rem;
+		transition: all 0.15s;
+	}
+
+	.btn-secondary:hover {
+		background: var(--border);
+		color: var(--text-primary);
+	}
+
+	.loading-state {
+		display: flex;
 		align-items: center;
 		justify-content: center;
+		gap: 10px;
 		padding: 80px 20px;
-		text-align: center;
-	}
-
-	.empty-icon {
-		color: var(--text-muted);
-		margin-bottom: 16px;
-	}
-
-	.empty-state h3 {
-		font-size: 1.2rem;
-		margin-bottom: 8px;
-	}
-
-	.empty-state p {
 		color: var(--text-secondary);
-		margin-bottom: 20px;
-	}
-
-	.btn-primary {
-		background: var(--accent);
-		color: var(--bg-primary);
-		padding: 10px 20px;
-		border-radius: 6px;
-		font-weight: 600;
 		font-size: 0.9rem;
-		transition: background 0.15s;
 	}
 
-	.btn-primary:hover {
-		background: var(--accent-hover);
+	.spinner {
+		display: inline-block;
+		width: 18px;
+		height: 18px;
+		border: 2px solid var(--border);
+		border-top-color: var(--accent);
+		border-radius: 50%;
+		animation: spin 0.6s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
 	}
 </style>
