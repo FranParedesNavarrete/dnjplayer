@@ -1,6 +1,5 @@
 export const en: Record<string, string> = {
 	// Navigation
-	'nav.library': 'Library',
 	'nav.history': 'History',
 	'nav.browse': 'Browse Mega',
 	'nav.player': 'Player',
@@ -10,13 +9,6 @@ export const en: Record<string, string> = {
 	// Status
 	'status.connected': 'Connected',
 	'status.notConnected': 'Not connected',
-
-	// Library page
-	'library.title': 'Library',
-	'library.subtitle': 'Your recently played and pre-processed content',
-	'library.empty': 'No content yet',
-	'library.emptyHint': 'Browse your Mega storage and play a video to get started.',
-	'library.browseMega': 'Browse Mega',
 
 	// Browse page
 	'browse.title': 'Browse Mega',
@@ -106,6 +98,16 @@ export const en: Record<string, string> = {
 	'settings.variantL': 'Large',
 	'settings.variantM': 'Medium (balanced)',
 	'settings.variantS': 'Small (performance)',
+
+	// Player settings
+	'settings.player': 'Player',
+	'settings.controlsHideDelay': 'Hide controls after',
+	'settings.delay5': '5 seconds',
+	'settings.delay10': '10 seconds',
+	'settings.delay15': '15 seconds',
+	'settings.delay30': '30 seconds',
+	'settings.delay60': '60 seconds',
+	'settings.delayNever': 'Never',
 
 	// History page
 	'history.title': 'History',

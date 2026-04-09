@@ -1,8 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Cloud, Sparkles, Sun, Moon, Palette, Link } from 'lucide-svelte';
+	import { Cloud, Sparkles, Sun, Moon, Palette, Link, Play } from 'lucide-svelte';
 	import { theme } from '$lib/stores/theme';
-	import { language, defaultShaderMode, defaultShaderVariant } from '$lib/stores/settings';
+	import {
+		language,
+		defaultShaderMode,
+		defaultShaderVariant,
+		controlsHideDelay,
+		type ControlsHideDelay,
+	} from '$lib/stores/settings';
 	import { isConnected, userEmail } from '$lib/stores/mega';
 	import { megaCheckStatus } from '$lib/services/mega-service';
 	import { t } from '$lib/i18n';
@@ -28,6 +34,11 @@
 	function handleShaderVariantChange(e: Event) {
 		const target = e.target as HTMLSelectElement;
 		defaultShaderVariant.set(target.value as ShaderVariant);
+	}
+
+	function handleControlsHideDelayChange(e: Event) {
+		const target = e.target as HTMLSelectElement;
+		controlsHideDelay.set(parseInt(target.value, 10) as ControlsHideDelay);
 	}
 </script>
 
@@ -129,6 +140,24 @@
 					<option value="L">{$t['settings.variantL']}</option>
 					<option value="M">{$t['settings.variantM']}</option>
 					<option value="S">{$t['settings.variantS']}</option>
+				</select>
+			</div>
+		</section>
+
+		<section class="settings-section">
+			<div class="section-title">
+				<Play size={18} strokeWidth={1.8} />
+				<h3>{$t['settings.player']}</h3>
+			</div>
+			<div class="setting-row">
+				<span class="setting-label">{$t['settings.controlsHideDelay']}</span>
+				<select class="setting-select" value={String($controlsHideDelay)} onchange={handleControlsHideDelayChange}>
+					<option value="0">{$t['settings.delayNever']}</option>
+					<option value="5000">{$t['settings.delay5']}</option>
+					<option value="10000">{$t['settings.delay10']}</option>
+					<option value="15000">{$t['settings.delay15']}</option>
+					<option value="30000">{$t['settings.delay30']}</option>
+					<option value="60000">{$t['settings.delay60']}</option>
 				</select>
 			</div>
 		</section>

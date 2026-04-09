@@ -353,7 +353,7 @@
 		flex-shrink: 0;
 		background: var(--bg-secondary, #161b22);
 		border-top: 1px solid var(--border);
-		padding: 6px 16px 10px;
+		padding: 6px 10px 0px;
 		border-radius: 0 0 8px 8px;
 	}
 
