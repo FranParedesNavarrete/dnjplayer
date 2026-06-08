@@ -1,5 +1,5 @@
 use super::client;
-use std::process::Command;
+use crate::util::command::hidden_command;
 
 /// Check if mega-cmd-server is running and responsive
 pub fn is_server_running() -> bool {
@@ -69,7 +69,7 @@ pub fn ensure_server() -> Result<(), String> {
     let mut last_err = String::from("No server binary found");
 
     for path in &candidates {
-        match Command::new(path).spawn() {
+        match hidden_command(path).spawn() {
             Ok(_) => {
                 // Wait for server to become responsive
                 for _ in 0..10 {

@@ -241,7 +241,7 @@
 
 <style>
 	.history-page {
-		max-width: 800px;
+		max-width: var(--content-max-narrow);
 	}
 
 	.page-header {

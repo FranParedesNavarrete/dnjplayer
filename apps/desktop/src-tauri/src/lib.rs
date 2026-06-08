@@ -1,6 +1,7 @@
 mod commands;
 mod mega;
 mod pipeline;
+mod util;
 
 use std::sync::Mutex;
 use tauri_plugin_sql::{Migration, MigrationKind};

@@ -1,8 +1,8 @@
-use std::process::Command;
+use crate::util::command::hidden_command;
 
 /// Get FFmpeg progress from Docker container logs
 pub fn get_container_progress(container_name: &str) -> Result<f64, String> {
-    let output = Command::new("docker")
+    let output = hidden_command("docker")
         .args(["logs", "--tail", "5", container_name])
         .output()
         .map_err(|e| format!("Failed to get container logs: {}", e))?;

@@ -1,8 +1,8 @@
-use std::process::Command;
+use crate::util::command::hidden_command;
 
 /// Check if Docker is installed and running
 pub fn is_docker_available() -> bool {
-    Command::new("docker")
+    hidden_command("docker")
         .arg("info")
         .output()
         .map(|o| o.status.success())
@@ -18,7 +18,7 @@ pub fn start_processing_container(
     target_width: u32,
     target_height: u32,
 ) -> Result<String, String> {
-    let output = Command::new("docker")
+    let output = hidden_command("docker")
         .args([
             "run",
             "-d",
@@ -55,11 +55,11 @@ pub fn start_processing_container(
 /// Stop and remove a processing container
 pub fn stop_container(job_id: &str) -> Result<(), String> {
     let container_name = format!("dnjplayer-{}", job_id);
-    Command::new("docker")
+    hidden_command("docker")
         .args(["stop", &container_name])
         .output()
         .ok();
-    Command::new("docker")
+    hidden_command("docker")
         .args(["rm", &container_name])
         .output()
         .ok();

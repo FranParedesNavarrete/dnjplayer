@@ -1,5 +1,6 @@
+use crate::util::command::hidden_command;
 use std::io::Read;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 /// Timeout for MEGAcmd commands (seconds).
@@ -83,7 +84,7 @@ fn try_exec(binary: &str, args: &[&str]) -> Result<String, String> {
     );
 
     for candidate in &candidates {
-        match Command::new(candidate)
+        match hidden_command(candidate)
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -156,7 +157,7 @@ fn try_exec(binary: &str, args: &[&str]) -> Result<String, String> {
 pub fn is_available() -> bool {
     // Try mega-exec with all platform paths
     for candidate in &binary_candidates("mega-exec") {
-        if Command::new(candidate)
+        if hidden_command(candidate)
             .arg("version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -170,7 +171,7 @@ pub fn is_available() -> bool {
     }
     // Fallback: try mega-version with all platform paths
     for candidate in &binary_candidates("mega-version") {
-        if Command::new(candidate)
+        if hidden_command(candidate)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

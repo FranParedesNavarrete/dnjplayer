@@ -5,6 +5,7 @@
 	import AuthForm from '$lib/components/AuthForm.svelte';
 	import FileBrowser from '$lib/components/FileBrowser.svelte';
 	import { t } from '$lib/i18n';
+	import { clearPrefetchCache } from '$lib/services/prefetch-service';
 
 	let checkingStatus = $state(true);
 
@@ -23,6 +24,7 @@
 	async function handleLogout() {
 		try {
 			await megaLogout();
+			clearPrefetchCache();
 			isConnected.set(false);
 			userEmail.set(null);
 		} catch (e) {
@@ -59,7 +61,7 @@
 
 <style>
 	.browse-page {
-		max-width: 1200px;
+		max-width: var(--content-max);
 		height: 100%;
 		display: flex;
 		flex-direction: column;

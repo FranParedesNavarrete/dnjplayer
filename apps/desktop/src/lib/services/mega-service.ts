@@ -29,3 +29,12 @@ export async function megaGetWebdavUrl(remotePath: string): Promise<string> {
 	return invoke('mega_get_webdav_url', { remotePath });
 }
 
+/**
+ * Recursively search the given roots for nodes whose name matches `query`.
+ * `roots` is the list of starting paths: `['/']` for the cloud drive, or one
+ * entry per incoming share for the shared section.
+ */
+export async function megaSearch(query: string, roots: string[]): Promise<MegaEntry[]> {
+	return invoke('mega_search', { query, roots });
+}
+

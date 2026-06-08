@@ -2,7 +2,12 @@
 	import { Layers, X, Trash2, Play, Music } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 	import { playlist, playlistIndex, playerActive } from '$lib/stores/player-ui';
-	import { megaGetWebdavUrl } from '$lib/services/mega-service';
+	import {
+		getCachedWebdavUrl,
+		prefetchAround,
+		invalidate,
+		clearPrefetchCache
+	} from '$lib/services/prefetch-service';
 	import { loadVideo } from '$lib/services/player-service';
 	import { setProperty } from 'tauri-plugin-libmpv-api';
 	import { markWatched } from '$lib/services/db-service';
@@ -17,9 +22,10 @@
 		playlistIndex.set(index);
 
 		try {
-			const url = await megaGetWebdavUrl(item.megaPath);
+			const url = await getCachedWebdavUrl(item.megaPath);
 			await loadVideo(url, item.name);
 			await setProperty('pause', 'no');
+			prefetchAround(index);
 			markWatched(item.megaPath, item.name).catch((e) =>
 				log.warn('[queue] Failed to mark watched:', e)
 			);
@@ -32,6 +38,9 @@
 	function removeItem(index: number) {
 		const items = [...$playlist];
 		const currentIdx = $playlistIndex;
+
+		const removed = items[index];
+		if (removed) invalidate(removed.megaPath);
 
 		items.splice(index, 1);
 		playlist.set(items);
@@ -48,6 +57,7 @@
 	function clearQueue() {
 		playlist.set([]);
 		playlistIndex.set(0);
+		clearPrefetchCache();
 	}
 </script>
 
@@ -111,7 +121,7 @@
 
 <style>
 	.queue-page {
-		max-width: 1200px;
+		max-width: var(--content-max);
 	}
 
 	.page-header {
