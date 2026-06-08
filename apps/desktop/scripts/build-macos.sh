@@ -16,6 +16,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
+if ! command -v create-dmg &> /dev/null; then
+  echo "ERROR: create-dmg not found. Install with: brew install create-dmg"
+  exit 1
+fi
+
 echo "==> Building .app bundle..."
 pnpm tauri build --bundles app
 
@@ -55,12 +60,27 @@ codesign --force --sign - "$DST"
 codesign --force --sign - "$BINARY-bin"
 codesign --force --sign - "$APP"
 
-echo "==> Creating DMG..."
+echo "==> Creating DMG with create-dmg..."
 DMG_DIR="src-tauri/target/release/bundle/macos"
+VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+DMG_NAME="dnjplayer-${VERSION}-macOS-arm64.dmg"
+DMG_PATH="$DMG_DIR/$DMG_NAME"
+
 rm -f "$DMG_DIR"/*.dmg
-hdiutil create -volname "dnjplayer" -srcfolder "$APP" -ov -format UDZO \
-  "$DMG_DIR/dnjplayer.dmg"
+
+create-dmg \
+  --volname "dnjplayer" \
+  --volicon "src-tauri/icons/icon.icns" \
+  --window-pos 200 120 \
+  --window-size 600 400 \
+  --icon-size 120 \
+  --icon "dnjplayer.app" 160 200 \
+  --hide-extension "dnjplayer.app" \
+  --app-drop-link 440 200 \
+  --no-internet-enable \
+  "$DMG_PATH" \
+  "$APP"
 
 echo "==> Done!"
 echo "    .app: $APP"
-echo "    .dmg: $DMG_DIR/dnjplayer.dmg"
+echo "    .dmg: $DMG_PATH"
