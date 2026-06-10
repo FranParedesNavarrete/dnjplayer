@@ -118,11 +118,17 @@ export async function initPlayer(): Promise<void> {
 					if (typeof data === 'number') speed.set(data);
 					break;
 				case 'eof-reached':
-					// Reliable end-of-file signal (keep-open pauses at EOF). This is
-					// the primary auto-advance trigger; the time-pos heuristic in
-					// checkAutoAdvance is just a fallback.
+					// Reliable end-of-file signal (keep-open pauses at EOF). Advance
+					// to the next item, or — if this was the last one — leave
+					// fullscreen so the sidebar/UI is usable again.
 					if (data === true || String(data) === 'yes') {
-						triggerAutoAdvance();
+						const items = get(playlist);
+						const idx = get(playlistIndex);
+						if (idx < items.length - 1) {
+							triggerAutoAdvance();
+						} else {
+							exitFullscreen();
+						}
 					}
 					break;
 			}
@@ -290,6 +296,8 @@ export function showMpvOverlay(): void {
  */
 export async function stopVideo(): Promise<void> {
 	if (!initialized) return;
+	// Leave fullscreen so the user isn't stuck on a chrome-less screen after stop.
+	await exitFullscreen();
 	// Clear flags FIRST so the rAF loop stops resizing immediately
 	const wasAttached = mpvWindowAttached;
 	mpvWindowAttached = false;

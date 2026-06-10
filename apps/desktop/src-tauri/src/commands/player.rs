@@ -445,9 +445,10 @@ fn do_resize_mpv_macos(
 /// reappears. The frontend polls this to re-show the controls. macOS uses
 /// setIgnoresMouseEvents so the webview gets the events directly (no poll needed).
 #[tauri::command]
-pub fn get_cursor_pos() -> Result<(i32, i32), String> {
+pub async fn get_cursor_pos(app: tauri::AppHandle) -> Result<(i32, i32), String> {
     #[cfg(target_os = "windows")]
     {
+        let _ = app;
         use windows::Win32::Foundation::POINT;
         use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
         let mut p = POINT::default();
@@ -456,15 +457,22 @@ pub fn get_cursor_pos() -> Result<(i32, i32), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        // +[NSEvent mouseLocation] returns the cursor in screen coords and is
-        // safe to call off the main thread. We only need movement deltas, so the
-        // (bottom-left) origin doesn't matter.
-        use objc2_app_kit::NSEvent;
-        let p = unsafe { NSEvent::mouseLocation() };
-        return Ok((p.x as i32, p.y as i32));
+        // Read +[NSEvent mouseLocation] on the main thread so it returns the live
+        // cursor position (screen coords; we only need movement deltas, so the
+        // bottom-left origin doesn't matter).
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+        app.run_on_main_thread(move || {
+            use objc2_app_kit::NSEvent;
+            let p = unsafe { NSEvent::mouseLocation() };
+            let _ = tx.send((p.x as i32, p.y as i32));
+        })
+        .map_err(|e| format!("Failed to dispatch to main thread: {}", e))?;
+        return rx.recv().map_err(|e| format!("Channel receive error: {}", e));
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
+        let _ = app;
         Err("cursor position polling not supported on this platform".into())
     }
 }
