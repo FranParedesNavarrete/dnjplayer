@@ -276,32 +276,96 @@ fn format_size(bytes_str: &str) -> String {
     }
 }
 
+/// Maximum folder depth (relative to each search root) returned by `mega_search`.
+/// Keeps result sets small and avoids matching deeply buried folders.
+const SEARCH_MAX_DEPTH: usize = 4;
+
+/// Recursively search the given roots for **folders** whose name matches `query`.
+///
+/// Only folders are returned (not individual files): the user navigates into a
+/// matching folder to pick episodes, which keeps result sets small. `find` still
+/// recurses fully, so we cap depth to `SEARCH_MAX_DEPTH` levels below each root.
+///
+/// `roots` is the list of starting paths to search:
+/// - Cloud drive: `["/"]`
+/// - Shared folders: one entry per incoming share, e.g.
+///   `["//from/user@mail.com:Folder 1", ...]` (MEGAcmd cannot search `//from`
+///   directly, so each share must be searched individually).
+///
+/// Uses `find <root> --pattern=*query* --type=d -l`, whose output looks like:
+///   `/path/to/folder (folder)`
+/// For results inside a share, MEGAcmd drops the `//from/` prefix, so we
+/// re-prepend it to keep paths usable for navigation/playback.
 #[tauri::command]
-pub async fn mega_search(query: String) -> Result<Vec<MegaEntry>, String> {
-    let output = client::exec(&["find", "/", "--pattern", &format!("*{}*", query)])?;
-    let entries = output
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| {
-            let path = l.trim().to_string();
-            let name = path
+pub async fn mega_search(query: String, roots: Vec<String>) -> Result<Vec<MegaEntry>, String> {
+    let pattern = format!("--pattern=*{}*", query);
+    let mut entries = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut last_err: Option<String> = None;
+
+    for root in &roots {
+        let output = match client::exec(&["find", root, &pattern, "--type=d", "-l"]) {
+            Ok(out) => out,
+            Err(e) => {
+                // Skip roots that fail (e.g. a revoked share) but remember the
+                // error in case every root fails.
+                last_err = Some(e);
+                continue;
+            }
+        };
+
+        for line in output.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            // Strip the trailing " (folder)" metadata to get the raw path.
+            let raw_path = match (line.rfind(" ("), line.ends_with(')')) {
+                (Some(idx), true) => &line[..idx],
+                _ => line,
+            };
+
+            // Rebuild an absolute path. Cloud results already start with '/';
+            // share results are relative to `//from/`.
+            let abs_path = if raw_path.starts_with('/') {
+                raw_path.to_string()
+            } else {
+                format!("//from/{}", raw_path)
+            };
+
+            // Enforce the depth cap relative to the root being searched.
+            let relative = abs_path.strip_prefix(root.as_str()).unwrap_or(&abs_path);
+            let depth = relative.split('/').filter(|s| !s.is_empty()).count();
+            if depth == 0 || depth > SEARCH_MAX_DEPTH {
+                continue;
+            }
+
+            if !seen.insert(abs_path.clone()) {
+                continue;
+            }
+
+            let name = abs_path
                 .rsplit('/')
                 .next()
-                .unwrap_or(&path)
+                .unwrap_or(&abs_path)
                 .to_string();
-            let is_folder = path.ends_with('/');
-            MegaEntry {
-                name: name.trim_end_matches('/').to_string(),
-                path: path.trim_end_matches('/').to_string(),
+
+            entries.push(MegaEntry {
+                name,
+                path: abs_path,
                 size: String::new(),
-                entry_type: if is_folder {
-                    "folder".to_string()
-                } else {
-                    "file".to_string()
-                },
-            }
-        })
-        .collect();
+                entry_type: "folder".to_string(),
+            });
+        }
+    }
+
+    // Only surface an error if we got nothing AND at least one root failed.
+    if entries.is_empty() {
+        if let Some(e) = last_err {
+            return Err(e);
+        }
+    }
 
     Ok(entries)
 }
@@ -311,6 +375,27 @@ pub async fn mega_get_webdav_url(remote_path: String) -> Result<String, String> 
     // Ensure server is running
     process::ensure_server()?;
     webdav::serve(&remote_path)
+}
+
+/// Open the official MEGAcmd download page in the user's browser. The page
+/// auto-detects the OS and serves the correct installer. We intentionally open
+/// the official page rather than hardcoding installer URLs (MEGA does not publish
+/// stable direct-download links — everything is resolved dynamically there).
+#[tauri::command]
+pub fn mega_open_install_page() -> Result<(), String> {
+    use crate::util::command::hidden_command;
+    const URL: &str = "https://mega.nz/cmd";
+
+    #[cfg(target_os = "macos")]
+    let spawn = hidden_command("open").arg(URL).spawn();
+    #[cfg(target_os = "windows")]
+    let spawn = hidden_command("cmd").args(["/C", "start", "", URL]).spawn();
+    #[cfg(target_os = "linux")]
+    let spawn = hidden_command("xdg-open").arg(URL).spawn();
+
+    spawn
+        .map(|_| ())
+        .map_err(|e| format!("Failed to open browser: {}", e))
 }
 
 #[tauri::command]

@@ -1,7 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { megaListFiles, megaGetWebdavUrl, megaListShares } from '$lib/services/mega-service';
+	import { megaListFiles, megaListShares, megaSearch } from '$lib/services/mega-service';
+	import {
+		getCachedWebdavUrl,
+		prefetchAround,
+		clearPrefetchCache
+	} from '$lib/services/prefetch-service';
 	import { loadVideo } from '$lib/services/player-service';
 	import { markWatched, getWatchedPaths, getFavoritePaths, toggleFavorite } from '$lib/services/db-service';
 	import { log } from '$lib/log';
@@ -10,7 +15,7 @@
 	import type { MegaEntry } from '$lib/types/mega';
 	import type { MegaShare } from '$lib/types/mega';
 	import type { PlaylistItem } from '$lib/types/player';
-	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users, Check, Square, CheckSquare, Play, Loader2, Heart } from 'lucide-svelte';
+	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users, Check, Square, CheckSquare, Play, Loader2, Heart, X } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 
 	const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.webm', '.mov', '.flv', '.wmv', '.m4v', '.ts'];
@@ -26,6 +31,12 @@
 	let error = $state('');
 	let activeTab = $state<SectionId>('cloud');
 	let shares = $state<MegaShare[]>([]);
+
+	// Global recursive search state
+	let searchResults = $state<MegaEntry[]>([]);
+	let isSearching = $state(false);
+	let searchSeq = 0; // guards against stale async results
+	let searchActive = $derived(searchQuery.trim().length >= 2);
 	let watchedPaths = $state<Set<string>>(new Set());
 	let favoritePaths = $state<Set<string>>(new Set());
 
@@ -103,6 +114,67 @@
 		}
 	}
 
+	/**
+	 * Roots to search recursively, scoped to the current location:
+	 * - Cloud drive: the folder you're browsing (root `/` = the whole drive).
+	 * - Inside a share: that share/subfolder (recurses into its subfolders).
+	 * - Shared list: every incoming share (MEGAcmd can't search `//from`
+	 *   directly, so each share is searched individually).
+	 * In every case `find` recurses all the way down, so nested subfolder
+	 * contents are always included.
+	 */
+	async function getSearchRoots(): Promise<string[]> {
+		if (activeTab === 'cloud' || isInsideShare) return [$currentPath];
+		// Shared section, at the list of shares: search across all shares.
+		let list = shares;
+		if (list.length === 0) {
+			list = await megaListShares();
+			shares = list;
+		}
+		return list.map((s) => s.path);
+	}
+
+	async function runSearch(query: string) {
+		const seq = ++searchSeq;
+		isSearching = true;
+		error = '';
+		try {
+			const roots = await getSearchRoots();
+			const results = await megaSearch(query, roots);
+			if (seq !== searchSeq) return; // a newer search superseded this one
+			searchResults = results;
+		} catch (e) {
+			if (seq !== searchSeq) return;
+			error = e instanceof Error ? e.message : String(e);
+			searchResults = [];
+		} finally {
+			if (seq === searchSeq) isSearching = false;
+		}
+	}
+
+	// Debounced recursive search: re-runs when the query or the active section
+	// changes. Queries shorter than 2 chars clear the results.
+	$effect(() => {
+		const query = searchQuery.trim();
+		activeTab; // track section so switching tabs re-runs the search
+		$currentPath; // track location so the scope follows where you are
+		if (query.length < 2) {
+			searchSeq++; // cancel any in-flight search
+			searchResults = [];
+			isSearching = false;
+			return;
+		}
+		const timer = setTimeout(() => runSearch(query), 350);
+		return () => clearTimeout(timer);
+	});
+
+	function clearSearch() {
+		searchQuery = '';
+		searchResults = [];
+		searchSeq++;
+		isSearching = false;
+	}
+
 	function clearSelection() {
 		selectedPaths = new Set();
 		selectionType = null;
@@ -110,6 +182,10 @@
 
 	function navigateToFolder(entry: MegaEntry) {
 		clearSelection();
+		// If we navigated from a search result, switch to the share section when
+		// the target lives inside an incoming share so the browse view loads it.
+		if (entry.path.startsWith('//from/')) activeTab = 'shared';
+		clearSearch();
 		currentPath.set(entry.path);
 	}
 
@@ -136,6 +212,7 @@
 
 	function switchTab(tab: SectionId) {
 		clearSelection();
+		clearSearch();
 		activeTab = tab;
 		if (tab === 'cloud') {
 			currentPath.set('/');
@@ -181,12 +258,13 @@
 		error = '';
 		loadingPlay = entry.name;
 		try {
+			clearPrefetchCache();
 			playlist.set([{ megaPath: entry.path, name: entry.name }]);
 			playlistIndex.set(0);
 
 			loadingStep = $t['browser.loadingWebdav'];
 			log.info('[FileBrowser] Getting WebDAV URL for:', entry.path);
-			const url = await megaGetWebdavUrl(entry.path);
+			const url = await getCachedWebdavUrl(entry.path);
 			log.info('[FileBrowser] Got WebDAV URL:', url);
 
 			loadingStep = $t['browser.loadingPlayer'];
@@ -244,12 +322,14 @@
 				return;
 			}
 
+			clearPrefetchCache();
 			playlist.set(playlistItems);
 			playlistIndex.set(0);
 
 			const firstItem = playlistItems[0];
-			const url = await megaGetWebdavUrl(firstItem.megaPath);
+			const url = await getCachedWebdavUrl(firstItem.megaPath);
 			await loadVideo(url, firstItem.name);
+			prefetchAround(0);
 			markWatched(firstItem.megaPath, firstItem.name).then(() => {
 				watchedPaths = new Set([...watchedPaths, firstItem.megaPath]);
 			}).catch((e) => log.warn('[FileBrowser] Failed to mark watched:', e));
@@ -277,14 +357,11 @@
 		if (e.key === 'Enter') handleEntryClick(entry);
 	}
 
-	let filteredEntries = $derived(
-		searchQuery
-			? $entries.filter((e) => e.name.toLowerCase().includes(searchQuery.toLowerCase()))
-			: $entries
-	);
+	// When a search is active, show recursive results; otherwise the current folder.
+	let sourceEntries = $derived(searchActive ? searchResults : $entries);
 
-	let folders = $derived(filteredEntries.filter((e) => e.entry_type === 'folder'));
-	let files = $derived(filteredEntries.filter((e) => e.entry_type === 'file'));
+	let folders = $derived(sourceEntries.filter((e) => e.entry_type === 'folder'));
+	let files = $derived(sourceEntries.filter((e) => e.entry_type === 'file'));
 </script>
 
 <div class="file-browser">
@@ -312,7 +389,12 @@
 				<ArrowUp size={16} strokeWidth={2} />
 			</button>
 			<span class="current-path">
-				{#if activeTab === 'shared' && !isInsideShare}
+				{#if searchActive}
+					{($t['browser.searching'].replace('...', '') + ': ') +
+						(activeTab === 'shared' && !isInsideShare
+							? $t['browser.sharedItems']
+							: $currentPath)}
+				{:else if activeTab === 'shared' && !isInsideShare}
 					{$t['browser.sharedWith']}
 				{:else}
 					{$currentPath}
@@ -323,9 +405,16 @@
 			<span class="search-icon-wrap"><Search size={14} strokeWidth={2} /></span>
 			<input
 				type="text"
-				placeholder={$t['browser.filter']}
+				placeholder={activeTab === 'shared'
+					? $t['browser.searchShared']
+					: $t['browser.searchCloud']}
 				bind:value={searchQuery}
 			/>
+			{#if searchQuery}
+				<button class="search-clear" onclick={clearSearch} title={$t['browser.clearSelection']}>
+					<X size={14} strokeWidth={2} />
+				</button>
+			{/if}
 		</div>
 	</div>
 
@@ -353,12 +442,12 @@
 		</div>
 	{/if}
 
-	{#if $isLoading}
+	{#if $isLoading || isSearching}
 		<div class="loading-state">
 			<span class="spinner"></span>
-			<span>{$t['browser.loading']}</span>
+			<span>{isSearching ? $t['browser.searching'] : $t['browser.loading']}</span>
 		</div>
-	{:else if activeTab === 'shared' && !isInsideShare}
+	{:else if activeTab === 'shared' && !isInsideShare && !searchActive}
 		{#if shares.length === 0}
 			<div class="empty-state">
 				<p>{$t['browser.noShared']}</p>
@@ -380,9 +469,9 @@
 				{/each}
 			</div>
 		{/if}
-	{:else if filteredEntries.length === 0}
+	{:else if sourceEntries.length === 0}
 		<div class="empty-state">
-			<p>{$t['browser.noFiles']}</p>
+			<p>{searchActive ? $t['browser.noResults'] : $t['browser.noFiles']}</p>
 		</div>
 	{:else}
 		<div class="file-list">
@@ -592,17 +681,36 @@
 		background: var(--bg-tertiary);
 		border: 1px solid var(--border);
 		border-radius: 6px;
-		padding: 7px 12px 7px 30px;
+		padding: 7px 30px 7px 30px;
 		color: var(--text-primary);
 		font-size: 0.85rem;
 		font-family: inherit;
 		outline: none;
-		width: 200px;
+		width: clamp(160px, 20vw, 280px);
 		transition: border-color 0.15s;
 	}
 
 	.search-bar input:focus {
 		border-color: var(--accent);
+	}
+
+	.search-clear {
+		position: absolute;
+		right: 8px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 2px;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
+		color: var(--text-muted);
+		cursor: pointer;
+		transition: color 0.15s;
+	}
+
+	.search-clear:hover {
+		color: var(--text-primary);
 	}
 
 	.error-banner {

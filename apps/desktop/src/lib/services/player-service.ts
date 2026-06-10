@@ -29,7 +29,7 @@ import { get } from 'svelte/store';
 import { playerActive, currentVideoUrl, currentVideoTitle, playlist, playlistIndex } from '$lib/stores/player-ui';
 import type { VideoAdjustments, ShaderMode, ShaderVariant } from '$lib/types/player';
 import { markWatched } from '$lib/services/db-service';
-import { megaGetWebdavUrl } from '$lib/services/mega-service';
+import { getCachedWebdavUrl, prefetchAround } from '$lib/services/prefetch-service';
 import { defaultShaderMode, defaultShaderVariant } from '$lib/stores/settings';
 import { activeShaderMode, shaderVariant as activeShaderVariant } from '$lib/stores/player';
 import { resolveResource } from '@tauri-apps/api/path';
@@ -487,9 +487,10 @@ export async function playNext(): Promise<boolean> {
 	playlistIndex.set(nextIdx);
 
 	try {
-		const url = await megaGetWebdavUrl(item.megaPath);
+		const url = await getCachedWebdavUrl(item.megaPath);
 		await loadVideo(url, item.name);
 		await setProperty('pause', 'no');
+		prefetchAround(nextIdx);
 		markWatched(item.megaPath, item.name).catch((e) =>
 			log.warn('[player] Failed to mark watched:', e)
 		);
@@ -510,9 +511,10 @@ export async function playPrev(): Promise<boolean> {
 	playlistIndex.set(prevIdx);
 
 	try {
-		const url = await megaGetWebdavUrl(item.megaPath);
+		const url = await getCachedWebdavUrl(item.megaPath);
 		await loadVideo(url, item.name);
 		await setProperty('pause', 'no');
+		prefetchAround(prevIdx);
 		markWatched(item.megaPath, item.name).catch((e) =>
 			log.warn('[player] Failed to mark watched:', e)
 		);

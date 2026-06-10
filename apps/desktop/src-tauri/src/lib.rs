@@ -1,6 +1,7 @@
 mod commands;
 mod mega;
 mod pipeline;
+mod util;
 
 use std::sync::Mutex;
 use tauri_plugin_sql::{Migration, MigrationKind};
@@ -50,6 +51,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_libmpv::init())
         .invoke_handler(tauri::generate_handler![
             commands::mega::mega_check_status,
@@ -62,6 +65,7 @@ pub fn run() {
             commands::mega::mega_search,
             commands::mega::mega_get_webdav_url,
             commands::mega::mega_stop_webdav,
+            commands::mega::mega_open_install_page,
             commands::pipeline::submit_job,
             commands::pipeline::get_jobs,
             commands::pipeline::cancel_job,

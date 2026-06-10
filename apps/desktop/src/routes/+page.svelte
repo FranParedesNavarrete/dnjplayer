@@ -1,20 +1,25 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { megaCheckStatus, megaLogout } from '$lib/services/mega-service';
-	import { isConnected, userEmail, megaError } from '$lib/stores/mega';
+	import { isConnected, userEmail, megaError, megaInstalled } from '$lib/stores/mega';
 	import AuthForm from '$lib/components/AuthForm.svelte';
+	import MegaCmdMissing from '$lib/components/MegaCmdMissing.svelte';
 	import FileBrowser from '$lib/components/FileBrowser.svelte';
 	import { t } from '$lib/i18n';
+	import { clearPrefetchCache } from '$lib/services/prefetch-service';
 
 	let checkingStatus = $state(true);
 
 	onMount(async () => {
 		try {
 			const status = await megaCheckStatus();
+			megaInstalled.set(status.installed);
 			isConnected.set(status.logged_in);
 			userEmail.set(status.email);
 		} catch {
-			// MEGAcmd not available - stay disconnected
+			// Status check failed — treat MEGAcmd as unavailable so the install
+			// prompt is shown instead of a dead login form.
+			megaInstalled.set(false);
 		} finally {
 			checkingStatus = false;
 		}
@@ -23,6 +28,7 @@
 	async function handleLogout() {
 		try {
 			await megaLogout();
+			clearPrefetchCache();
 			isConnected.set(false);
 			userEmail.set(null);
 		} catch (e) {
@@ -50,6 +56,8 @@
 			<span class="spinner"></span>
 			<span>{$t['browse.checking']}</span>
 		</div>
+	{:else if $megaInstalled === false}
+		<MegaCmdMissing />
 	{:else if $isConnected}
 		<FileBrowser />
 	{:else}
@@ -59,7 +67,7 @@
 
 <style>
 	.browse-page {
-		max-width: 1200px;
+		max-width: var(--content-max);
 		height: 100%;
 		display: flex;
 		flex-direction: column;

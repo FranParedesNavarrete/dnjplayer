@@ -7,6 +7,8 @@
 	import { megaCheckStatus } from '$lib/services/mega-service';
 	import { page } from '$app/stores';
 	import { t } from '$lib/i18n';
+	import { checkForUpdates } from '$lib/services/update-service';
+	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import { Clock, CloudDownload, Zap, Settings, Play, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-svelte';
 
 	let { children } = $props();
@@ -29,6 +31,11 @@
 		}).catch(() => {
 			// MEGAcmd not running or not installed — stay disconnected
 		});
+
+		// Silently check for app updates a few seconds after launch.
+		setTimeout(() => {
+			checkForUpdates(true).catch(() => {});
+		}, 3000);
 	});
 
 	function toggleSidebar() {
@@ -103,6 +110,7 @@
 		</div>
 	</nav>
 	<main class="content">
+		<UpdateBanner />
 		{@render children()}
 	</main>
 </div>
@@ -282,6 +290,6 @@
 	.content {
 		flex: 1;
 		overflow-y: auto;
-		padding: 24px;
+		padding: var(--page-pad);
 	}
 </style>

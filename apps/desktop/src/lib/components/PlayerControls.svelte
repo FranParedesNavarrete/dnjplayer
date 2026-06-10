@@ -530,7 +530,7 @@
 	}
 
 	.volume-slider {
-		width: 80px;
+		width: clamp(60px, 8vw, 120px);
 		height: 4px;
 		-webkit-appearance: none;
 		appearance: none;

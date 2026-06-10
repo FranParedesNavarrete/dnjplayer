@@ -31,6 +31,10 @@ export const en: Record<string, string> = {
 	'browser.sharedItems': 'Shared Items',
 	'browser.sharedWith': 'Shared with you',
 	'browser.filter': 'Filter files...',
+	'browser.searchCloud': 'Search your drive...',
+	'browser.searchShared': 'Search shared folders...',
+	'browser.searching': 'Searching...',
+	'browser.noResults': 'No results found.',
 	'browser.loading': 'Loading...',
 	'browser.noShared': 'No shared items found.',
 	'browser.noFiles': 'No files found in this directory.',
@@ -132,4 +136,25 @@ export const en: Record<string, string> = {
 	'player.osd.shaderB': 'Anime4K: Type B (720p)',
 	'player.osd.shaderC': 'Anime4K: Type C (480p)',
 	'player.osd.shaderOff': 'Anime4K: Clear',
+
+	// Updates
+	'update.available': 'Update available: v{version}',
+	'update.installNow': 'Update now',
+	'update.later': 'Later',
+	'update.downloading': 'Downloading… {pct}%',
+	'update.restarting': 'Restarting…',
+	'update.check': 'Check for updates',
+	'update.checking': 'Checking…',
+	'update.upToDate': "You're on the latest version",
+	'update.error': 'Update check failed',
+	'update.currentVersion': 'Current version',
+
+	// MEGAcmd dependency
+	'megacmd.title': 'MEGAcmd is required',
+	'megacmd.body':
+		'dnjplayer uses MEGAcmd to connect to your MEGA account. It is not installed yet. Install it and then come back.',
+	'megacmd.install': 'Install MEGAcmd',
+	'megacmd.recheck': 'I installed it',
+	'megacmd.checking': 'Checking…',
+	'megacmd.hint': 'Opens the official MEGA download page for your system.',
 };
