@@ -51,6 +51,28 @@ $tag = "v$version"
 Write-Host "==> Building dnjplayer $tag for Windows ($Target)..."
 
 rustup target add $Target | Out-Null
+
+# Load the MSVC toolchain environment so cargo finds link.exe (a plain PowerShell
+# doesn't have it; needed especially when cross-compiling x64 on an ARM64 host).
+if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
+  $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+  if (Test-Path $vswhere) {
+    $vsPath = & $vswhere -latest -products * `
+      -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+      -property installationPath | Select-Object -First 1
+    $devShell = Join-Path $vsPath "Common7\Tools\Launch-VsDevShell.ps1"
+    if ($vsPath -and (Test-Path $devShell)) {
+      $vsArch = if ($Target -like "aarch64*") { "arm64" } else { "amd64" }
+      $hostArch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
+      Write-Host "==> Loading MSVC environment (target $vsArch, host $hostArch)..."
+      & $devShell -Arch $vsArch -HostArch $hostArch -SkipAutomaticLocation
+    }
+  }
+}
+if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
+  throw "MSVC link.exe not found. Install the 'Desktop development with C++' workload, or run from a 'Developer PowerShell for VS'."
+}
+
 pnpm install
 pnpm tauri build --target $Target
 
