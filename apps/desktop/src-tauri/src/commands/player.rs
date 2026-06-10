@@ -314,7 +314,7 @@ pub async fn resize_mpv_window(
         use tauri::Manager;
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{
-            SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOZORDER,
+            SetWindowPos, ShowWindow, HWND_TOP, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOWNA,
         };
 
         let state = app.state::<crate::MpvWindowState>();
@@ -330,6 +330,11 @@ pub async fn resize_mpv_window(
             .unwrap_or(1.0);
 
         unsafe {
+            // Re-show the window in case it was hidden (SW_HIDE) when navigating
+            // away. macOS restores visibility here too; Windows was missing it,
+            // which left the video invisible after returning to the player.
+            // SW_SHOWNA = show without stealing activation/focus.
+            let _ = ShowWindow(mpv_hwnd, SW_SHOWNA);
             let _ = SetWindowPos(
                 mpv_hwnd,
                 HWND_TOP,
