@@ -63,9 +63,10 @@ if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
     $devShell = Join-Path $vsPath "Common7\Tools\Launch-VsDevShell.ps1"
     if ($vsPath -and (Test-Path $devShell)) {
       $vsArch = if ($Target -like "aarch64*") { "arm64" } else { "amd64" }
-      $hostArch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
-      Write-Host "==> Loading MSVC environment (target $vsArch, host $hostArch)..."
-      & $devShell -Arch $vsArch -HostArch $hostArch -SkipAutomaticLocation
+      # Launch-VsDevShell only accepts x86/amd64 for HostArch; on an ARM64 host
+      # the x64 host tools run via emulation, which is fine for building.
+      Write-Host "==> Loading MSVC environment (target $vsArch, host amd64)..."
+      & $devShell -Arch $vsArch -HostArch amd64 -SkipAutomaticLocation
     }
   }
 }
