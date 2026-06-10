@@ -209,6 +209,13 @@ async function attachMpvWindow(): Promise<void> {
 			await invoke('attach_mpv_to_window', { mpvWindowPtr: windowId });
 			mpvWindowAttached = true;
 			log.debug('[player] mpv window attached as child, window-id:', windowId, `(attempt ${attempt})`);
+			// Newer mpv can render to the desktop on the very first attach because
+			// its window isn't fully realized yet (a stop+replay fixes it — i.e. a
+			// second SetParent). Re-attach shortly after to settle it into the app
+			// window without needing user interaction. Idempotent re-parent.
+			setTimeout(() => {
+				invoke('attach_mpv_to_window', { mpvWindowPtr: windowId }).catch(() => {});
+			}, 700);
 			return;
 		} catch (e) {
 			log.warn(`[player] attach attempt ${attempt}/${MAX_ATTEMPTS} failed:`, e);
@@ -239,6 +246,14 @@ export async function resizeMpvOverlay(x: number, y: number, width: number, heig
 export async function hideMpvOverlay(): Promise<void> {
 	if (!(isMacOS || isWindows)) return;
 	mpvWindowAttached = false;
+	// Pause playback so audio doesn't keep going while the player view is hidden
+	// (e.g. when navigating to another section). Hiding the window alone does NOT
+	// stop mpv. Keeps the position so the user can resume on return.
+	try {
+		if (initialized) await setProperty('pause', 'yes');
+	} catch {
+		// ignore — mpv may not be ready
+	}
 	try {
 		await invoke('hide_mpv_window');
 	} catch (e) {
