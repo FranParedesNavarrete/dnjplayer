@@ -439,3 +439,25 @@ fn do_resize_mpv_macos(
 
     Ok(())
 }
+
+/// Return the global cursor position (screen pixels). Used on Windows to detect
+/// mouse movement over the native mpv window, which sits on top of the webview
+/// and (with newer libmpv) swallows mouse-move events — so the webview's
+/// onmousemove no longer fires over the video and the controls bar never
+/// reappears. The frontend polls this to re-show the controls. macOS uses
+/// setIgnoresMouseEvents so the webview gets the events directly (no poll needed).
+#[tauri::command]
+pub fn get_cursor_pos() -> Result<(i32, i32), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        let mut p = POINT::default();
+        unsafe { GetCursorPos(&mut p).map_err(|e| e.to_string())?; }
+        return Ok((p.x, p.y));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("cursor position polling is only used on Windows".into())
+    }
+}

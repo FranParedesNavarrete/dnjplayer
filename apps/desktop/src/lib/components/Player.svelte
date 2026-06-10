@@ -8,6 +8,11 @@
 	import { Play } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 	import { get } from 'svelte/store';
+	import { invoke } from '@tauri-apps/api/core';
+
+	const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
+	let cursorPollTimer: ReturnType<typeof setInterval> | null = null;
+	let lastCursor = { x: -1, y: -1 };
 
 	let videoAreaEl: HTMLDivElement;
 	let rafId: number | null = null;
@@ -135,11 +140,32 @@
 
 		// Start the inactivity timer
 		scheduleHideControls();
+
+		// Windows: the native mpv window swallows mouse-move events over the video
+		// (newer libmpv doesn't pass them through to the webview), so the webview's
+		// onmousemove never fires there and the controls bar can't reappear. Poll
+		// the global cursor and treat any movement as activity. macOS passes mouse
+		// events to the webview natively (setIgnoresMouseEvents), so no poll needed.
+		if (isWindows) {
+			cursorPollTimer = setInterval(async () => {
+				if (!$playerActive) return;
+				try {
+					const pos = await invoke<[number, number]>('get_cursor_pos');
+					if (pos[0] !== lastCursor.x || pos[1] !== lastCursor.y) {
+						lastCursor = { x: pos[0], y: pos[1] };
+						handleMouseMove();
+					}
+				} catch {
+					// ignore
+				}
+			}, 200);
+		}
 	});
 
 	onDestroy(() => {
 		if (rafId !== null) cancelAnimationFrame(rafId);
 		if (controlsTimer) clearTimeout(controlsTimer);
+		if (cursorPollTimer) clearInterval(cursorPollTimer);
 		if (resizeObserver) {
 			resizeObserver.disconnect();
 			resizeObserver = null;
