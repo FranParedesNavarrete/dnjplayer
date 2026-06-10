@@ -103,7 +103,10 @@ gh release download $tag --repo $repo --pattern "latest.json" --output $manifest
 $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
 $winEntry = [PSCustomObject]@{ signature = $signature; url = $url }
 $manifest.platforms | Add-Member -NotePropertyName $platformKey -NotePropertyValue $winEntry -Force
-$manifest | ConvertTo-Json -Depth 10 | Set-Content -Path $manifestPath -Encoding UTF8
+# Write UTF-8 WITHOUT BOM. Set-Content -Encoding UTF8 (PowerShell 5.1) adds a BOM,
+# which breaks the updater's JSON parser ("error decoding response body").
+$json = $manifest | ConvertTo-Json -Depth 10
+[System.IO.File]::WriteAllText($manifestPath, $json, (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host "==> Uploading installer + updated latest.json to $tag..."
 gh release upload $tag --repo $repo --clobber $installer.FullName $manifestPath
