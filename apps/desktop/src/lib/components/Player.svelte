@@ -230,6 +230,7 @@
 		<div
 			class="controls-wrapper"
 			class:hidden={!controlsVisible}
+			class:fullscreen={$playerFullscreen}
 			ontransitionend={handleControlsTransitionEnd}
 		>
 			<PlayerControls />
@@ -268,6 +269,15 @@
 		max-height: 0;
 		opacity: 0;
 		pointer-events: none;
+	}
+
+	/* In fullscreen the sidebar is hidden, so when the controls also collapse the
+	   native mpv window would cover the ENTIRE webview. macOS then marks the
+	   webview as occluded and freezes its timers/rendering, so the cursor poll
+	   stops and the controls can never reappear. Keep a tiny sliver of the
+	   webview uncovered so it stays "visible" and active. */
+	.controls-wrapper.hidden.fullscreen {
+		max-height: 4px;
 	}
 
 	.video-area.has-video {
