@@ -98,8 +98,28 @@ a:hover {
 }
 
 button {
-	cursor: pointer;
 	font-family: inherit;
+}
+
+/* Pointer cursor on every interactive control. Selects/labels/roled elements
+   don't get it by default; buttons/links are reinforced here too. */
+button,
+a,
+label,
+select,
+summary,
+[role='button'],
+[role='tab'],
+[role='option'] {
+	cursor: pointer;
+}
+
+/* Disabled controls shouldn't show the pointer. */
+button:disabled,
+button[disabled],
+select:disabled,
+[aria-disabled='true'] {
+	cursor: not-allowed;
 }
 
 ::-webkit-scrollbar {
