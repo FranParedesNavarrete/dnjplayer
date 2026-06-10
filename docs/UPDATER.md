@@ -68,9 +68,16 @@ and merges the `windows-x86_64` entry into the same release's `latest.json`:
 .\scripts\release-windows.ps1 -Publish   # upload installer + update latest.json
 ```
 
+The script **cross-compiles to x64** (`--target x86_64-pc-windows-msvc`) by
+default, which is correct even on a **Windows ARM64** host: the bundled
+`libmpv-2.dll` is x64, and an x64 build runs on both x64 and ARM64 (emulation).
+Override with `-Target aarch64-pc-windows-msvc` only if you also ship an ARM64
+libmpv. The updater key is derived from the target (`windows-x86_64`).
+
 Prerequisites on the Windows machine:
-- Rust (msvc target), Microsoft C++ Build Tools, Node + pnpm, `gh`.
-- `libmpv-2.dll` present (`bash scripts/setup-libmpv.sh` — it's gitignored).
+- Rust + `rustup target add x86_64-pc-windows-msvc`, Microsoft C++ Build Tools
+  (with x64 support), Node + pnpm, `gh`.
+- `libmpv-2.dll` (x64) present (`bash scripts/setup-libmpv.sh` — it's gitignored).
 - The **same** updater private key as macOS: copy `~/.tauri/dnjplayer_updater.key`
   to the Windows machine (or set `TAURI_SIGNING_PRIVATE_KEY`). One key signs both
   platforms; the single `pubkey` in `tauri.conf.json` verifies both.

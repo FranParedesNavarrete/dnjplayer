@@ -14,11 +14,19 @@
 # Requires: Rust (msvc), MS C++ Build Tools, Node+pnpm, gh, and the SAME updater
 # private key used on macOS (copy ~/.tauri/dnjplayer_updater.key to this machine).
 
-param([switch]$Publish)
+param([switch]$Publish, [string]$Target = "x86_64-pc-windows-msvc")
 $ErrorActionPreference = "Stop"
 
 $repo = "FranParedesNavarrete/dnjplayer"
 Set-Location (Join-Path $PSScriptRoot "..")
+
+# Updater platform key for the target (x64 build runs on x64 AND ARM64 via
+# emulation; the bundled libmpv-2.dll is x64, so we cross-compile to x64 even on
+# an ARM64 host).
+$platformKey = switch ($Target) {
+  "aarch64-pc-windows-msvc" { "windows-aarch64" }
+  default { "windows-x86_64" }
+}
 
 # Load the signing key (content) from env or the local key file.
 if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
@@ -40,13 +48,14 @@ if (-not (Test-Path "src-tauri\lib\libmpv-2.dll")) {
 
 $version = (Get-Content "src-tauri\tauri.conf.json" -Raw | ConvertFrom-Json).version
 $tag = "v$version"
-Write-Host "==> Building dnjplayer $tag for Windows..."
+Write-Host "==> Building dnjplayer $tag for Windows ($Target)..."
 
+rustup target add $Target | Out-Null
 pnpm install
-pnpm tauri build
+pnpm tauri build --target $Target
 
 # Locate the NSIS updater installer and its signature.
-$nsisDir = "src-tauri\target\release\bundle\nsis"
+$nsisDir = "src-tauri\target\$Target\release\bundle\nsis"
 $installer = Get-ChildItem $nsisDir -Filter "*-setup.exe" | Select-Object -First 1
 $sigFile   = Get-ChildItem $nsisDir -Filter "*-setup.exe.sig" | Select-Object -First 1
 if (-not $installer -or -not $sigFile) {
@@ -70,7 +79,7 @@ $manifestPath = Join-Path $work "latest.json"
 gh release download $tag --repo $repo --pattern "latest.json" --output $manifestPath --clobber
 $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
 $winEntry = [PSCustomObject]@{ signature = $signature; url = $url }
-$manifest.platforms | Add-Member -NotePropertyName "windows-x86_64" -NotePropertyValue $winEntry -Force
+$manifest.platforms | Add-Member -NotePropertyName $platformKey -NotePropertyValue $winEntry -Force
 $manifest | ConvertTo-Json -Depth 10 | Set-Content -Path $manifestPath -Encoding UTF8
 
 Write-Host "==> Uploading installer + updated latest.json to $tag..."
