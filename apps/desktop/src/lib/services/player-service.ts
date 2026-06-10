@@ -45,6 +45,7 @@ const OBSERVED_PROPERTIES = [
 	['height', 'int64', 'none'],
 	['volume', 'double', 'none'],
 	['speed', 'double', 'none'],
+	['eof-reached', 'flag', 'none'],
 ] as const satisfies MpvObservableProperty[];
 
 const isMacOS = navigator.platform?.toLowerCase().includes('mac') ?? false;
@@ -115,6 +116,14 @@ export async function initPlayer(): Promise<void> {
 					break;
 				case 'speed':
 					if (typeof data === 'number') speed.set(data);
+					break;
+				case 'eof-reached':
+					// Reliable end-of-file signal (keep-open pauses at EOF). This is
+					// the primary auto-advance trigger; the time-pos heuristic in
+					// checkAutoAdvance is just a fallback.
+					if (data === true || String(data) === 'yes') {
+						triggerAutoAdvance();
+					}
 					break;
 			}
 		}
@@ -545,12 +554,22 @@ export async function playPrev(): Promise<boolean> {
 	}
 }
 
+/** Advance to the next item once, guarded against re-entry. */
+function triggerAutoAdvance(): void {
+	if (autoAdvancing) return;
+	const items = get(playlist);
+	const idx = get(playlistIndex);
+	if (idx >= items.length - 1) return; // nothing to advance to
+	autoAdvancing = true;
+	playNext().finally(() => {
+		autoAdvancing = false;
+	});
+}
+
 export function checkAutoAdvance(timePos: number | null, dur: number | null): void {
-	if (autoAdvancing || !timePos || !dur || dur <= 5) return;
+	if (!timePos || !dur || dur <= 5) return;
+	// Fallback heuristic; the primary trigger is mpv's eof-reached property.
 	if (timePos >= dur - 1) {
-		autoAdvancing = true;
-		playNext().finally(() => {
-			autoAdvancing = false;
-		});
+		triggerAutoAdvance();
 	}
 }
