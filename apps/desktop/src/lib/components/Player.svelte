@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { resizeMpvOverlay, hideMpvOverlay, showMpvOverlay, exitFullscreen } from '$lib/services/player-service';
-	import { playerActive } from '$lib/stores/player-ui';
+	import { playerActive, playerFullscreen } from '$lib/stores/player-ui';
 	import { osdMessage } from '$lib/stores/player';
 	import { controlsHideDelay } from '$lib/stores/settings';
 	import PlayerControls from './PlayerControls.svelte';
@@ -11,6 +11,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 
 	const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
+	const isMacOS = navigator.platform?.toLowerCase().includes('mac') ?? false;
 	let cursorPollTimer: ReturnType<typeof setInterval> | null = null;
 	let lastCursor = { x: -1, y: -1 };
 
@@ -119,6 +120,17 @@
 		resizeMpvOverlay(r.x, r.y, r.w, r.h);
 	}
 
+	// Re-sync the mpv overlay after entering/exiting fullscreen. The window
+	// resizes (maximize/unmaximize on macOS, setFullscreen on Windows) and the
+	// layout changes; without forcing a fresh resize the video can end up
+	// mispositioned or invisible after the transition.
+	$effect(() => {
+		$playerFullscreen; // track changes
+		lastRect = { x: -1, y: -1, w: -1, h: -1 };
+		const t = setTimeout(() => forceRectUpdate(), 350);
+		return () => clearTimeout(t);
+	});
+
 	onMount(() => {
 		// Re-show the mpv window if playback is active (e.g., navigated away and back)
 		if ($playerActive) {
@@ -141,12 +153,11 @@
 		// Start the inactivity timer
 		scheduleHideControls();
 
-		// Windows: the native mpv window swallows mouse-move events over the video
-		// (newer libmpv doesn't pass them through to the webview), so the webview's
-		// onmousemove never fires there and the controls bar can't reappear. Poll
-		// the global cursor and treat any movement as activity. macOS passes mouse
-		// events to the webview natively (setIgnoresMouseEvents), so no poll needed.
-		if (isWindows) {
+		// The native mpv window sits over the video and can swallow mouse-move
+		// events (Windows always; macOS in fullscreen), so the webview's
+		// onmousemove doesn't fire over the video and the controls bar can't
+		// reappear. Poll the global cursor and treat any movement as activity.
+		if (isWindows || isMacOS) {
 			cursorPollTimer = setInterval(async () => {
 				if (!$playerActive) return;
 				try {

@@ -454,8 +454,17 @@ pub fn get_cursor_pos() -> Result<(i32, i32), String> {
         unsafe { GetCursorPos(&mut p).map_err(|e| e.to_string())?; }
         return Ok((p.x, p.y));
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
-        Err("cursor position polling is only used on Windows".into())
+        // +[NSEvent mouseLocation] returns the cursor in screen coords and is
+        // safe to call off the main thread. We only need movement deltas, so the
+        // (bottom-left) origin doesn't matter.
+        use objc2_app_kit::NSEvent;
+        let p = unsafe { NSEvent::mouseLocation() };
+        return Ok((p.x as i32, p.y as i32));
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        Err("cursor position polling not supported on this platform".into())
     }
 }
