@@ -1,3 +1,6 @@
 packages:
   - 'apps/*'
-approveBuildsAutomatically: true
+# Allow esbuild's install script (pnpm blocks build scripts by default; pnpm 11
+# turns the notice into a hard error). New home for this setting in pnpm 10+/11.
+onlyBuiltDependencies:
+  - esbuild

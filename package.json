@@ -7,8 +7,5 @@
     "dev": "pnpm --filter desktop dev",
     "build": "pnpm --filter desktop build",
     "tauri": "pnpm --filter desktop tauri"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
   }
 }
