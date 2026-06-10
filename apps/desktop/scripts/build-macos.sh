@@ -77,6 +77,24 @@ vendor_deps() {
   done
 }
 
+# Remove ALL LC_RPATH entries from the bundled libraries. dylibbundler can leave
+# DUPLICATE rpaths (e.g. two "@executable_path/lib/"), which dyld rejects with
+# "duplicate LC_RPATH" -> dlopen fails -> "Failed to create mpv instance". No
+# dependency here uses @rpath (all use explicit @executable_path/lib paths), so
+# the rpaths are unnecessary and safe to strip entirely.
+strip_rpaths() {
+  local LIBDIR="$1"
+  for f in "$LIBDIR"/*; do
+    [ -f "$f" ] || continue
+    while otool -l "$f" 2>/dev/null | grep -q "cmd LC_RPATH"; do
+      local rp
+      rp=$(otool -l "$f" 2>/dev/null | awk '/cmd LC_RPATH/{getline;getline;print $2;exit}')
+      [ -z "$rp" ] && break
+      install_name_tool -delete_rpath "$rp" "$f" 2>/dev/null || break
+    done
+  done
+}
+
 echo "==> Building .app bundle..."
 pnpm tauri build --bundles app
 
@@ -100,6 +118,7 @@ chmod +w "$DST_DIR/libmpv.2.dylib"
 # Bulk-bundle the dependency tree, then catch anything left (frameworks, ids).
 dylibbundler -of -b -x "$DST_DIR/libmpv.2.dylib" -d "$DST_DIR" -p "@executable_path/lib" >/dev/null
 vendor_deps "$DST_DIR"
+strip_rpaths "$DST_DIR"
 # The wrapper dlopen()s the unversioned name.
 ln -sf libmpv.2.dylib "$DST_DIR/libmpv.dylib"
 
