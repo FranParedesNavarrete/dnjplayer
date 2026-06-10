@@ -55,7 +55,7 @@ pub async fn attach_mpv_to_window(
         use windows::Win32::UI::WindowsAndMessaging::{
             GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos,
             GWL_EXSTYLE, GWL_STYLE,
-            HWND_TOP, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+            HWND_TOP, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_HIDEWINDOW,
             WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
             WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT,
         };
@@ -92,17 +92,15 @@ pub async fn attach_mpv_to_window(
             // Re-parent: make mpv a child of Tauri window
             let _ = windows::Win32::UI::WindowsAndMessaging::SetParent(mpv_hwnd, tauri_hwnd);
 
-            // Position mpv window to fill the client area
-            let mut rect = windows::Win32::Foundation::RECT::default();
-            let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(tauri_hwnd, &mut rect);
-
+            // Start HIDDEN at 1x1 (like macOS). resize_mpv_window will show and
+            // position it over the video area once the player page mounts.
+            // Filling the whole client area + showing here covered the entire app
+            // in black while the stream loaded — looked like the app was broken.
             let _ = SetWindowPos(
                 mpv_hwnd,
                 HWND_TOP,
-                0, 0,
-                rect.right - rect.left,
-                rect.bottom - rect.top,
-                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                0, 0, 1, 1,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_HIDEWINDOW,
             );
         }
 
