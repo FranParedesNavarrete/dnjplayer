@@ -2,7 +2,7 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { isConnected, userEmail } from '$lib/stores/mega';
-	import { playerActive } from '$lib/stores/player-ui';
+	import { playerActive, playerFullscreen } from '$lib/stores/player-ui';
 	import { theme } from '$lib/stores/theme';
 	import { megaCheckStatus } from '$lib/services/mega-service';
 	import { page } from '$app/stores';
@@ -56,7 +56,7 @@
 	<title>dnjplayer</title>
 </svelte:head>
 
-<div class="app-shell">
+<div class="app-shell" class:fullscreen={$playerFullscreen}>
 	<nav class="sidebar" class:collapsed={collapsed}>
 		<div class="sidebar-header">
 			{#if !collapsed}
@@ -291,5 +291,15 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: var(--page-pad);
+	}
+
+	/* Immersive fullscreen: hide sidebar/chrome so the player fills the screen. */
+	.app-shell.fullscreen .sidebar {
+		display: none;
+	}
+
+	.app-shell.fullscreen .content {
+		padding: 0;
+		overflow: hidden;
 	}
 </style>

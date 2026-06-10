@@ -11,7 +11,7 @@
 		contrast,
 		saturation
 	} from '$lib/stores/player';
-	import { currentVideoTitle, playlist, playlistIndex } from '$lib/stores/player-ui';
+	import { currentVideoTitle, playlist, playlistIndex, playerFullscreen } from '$lib/stores/player-ui';
 	import { defaultShaderMode, defaultShaderVariant } from '$lib/stores/settings';
 	import {
 		togglePause,
@@ -22,7 +22,6 @@
 		setMute,
 		stopVideo,
 		toggleFullscreen,
-		isFullscreen,
 		setVideoAdjustment,
 		resetVideoAdjustments,
 		loadShaderPreset,
@@ -57,7 +56,7 @@
 	});
 
 	let isMuted = $state(false);
-	let isFs = $state(false);
+	let isFs = $derived($playerFullscreen);
 	let showAdjustments = $state(false);
 
 	function formatTime(seconds: number | null): string {
@@ -102,7 +101,6 @@
 
 	async function handleFullscreen() {
 		await toggleFullscreen();
-		isFs = !isFs;
 	}
 
 	async function switchShaderMode(mode: ShaderMode) {
@@ -153,7 +151,7 @@
 				e.preventDefault();
 				break;
 			case 'Escape':
-				isFullscreen().then((fs) => { if (fs) handleFullscreen(); });
+				if ($playerFullscreen) handleFullscreen();
 				break;
 
 			// Contrast: 1 / 2

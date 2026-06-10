@@ -26,7 +26,7 @@ import {
 	hue
 } from '$lib/stores/player';
 import { get } from 'svelte/store';
-import { playerActive, currentVideoUrl, currentVideoTitle, playlist, playlistIndex } from '$lib/stores/player-ui';
+import { playerActive, currentVideoUrl, currentVideoTitle, playlist, playlistIndex, playerFullscreen } from '$lib/stores/player-ui';
 import type { VideoAdjustments, ShaderMode, ShaderVariant } from '$lib/types/player';
 import { markWatched } from '$lib/services/db-service';
 import { getCachedWebdavUrl, prefetchAround } from '$lib/services/prefetch-service';
@@ -459,29 +459,34 @@ async function applyUserShaderPreset(): Promise<void> {
 
 export async function toggleFullscreen(): Promise<void> {
 	const win = getCurrentWindow();
+	const entering = !get(playerFullscreen);
 	if (isMacOS) {
 		// On macOS with child NSWindow, native fullscreen (new Space) doesn't
 		// bring the child window along. Use maximize + decorations toggle instead.
-		const isMax = await win.isMaximized();
-		if (isMax) {
-			await win.unmaximize();
-			await win.setDecorations(true);
-		} else {
+		if (entering) {
 			await win.setDecorations(false);
 			await win.maximize();
+		} else {
+			await win.unmaximize();
+			await win.setDecorations(true);
 		}
 	} else {
-		const isFs = await win.isFullscreen();
-		await win.setFullscreen(!isFs);
+		await win.setFullscreen(entering);
+	}
+	// Drives the layout: hides sidebar/chrome and fills the viewport so the mpv
+	// overlay (which tracks the video area) covers the whole screen.
+	playerFullscreen.set(entering);
+}
+
+/** Exit fullscreen if active (e.g. when leaving the player page). */
+export async function exitFullscreen(): Promise<void> {
+	if (get(playerFullscreen)) {
+		await toggleFullscreen();
 	}
 }
 
 export async function isFullscreen(): Promise<boolean> {
-	const win = getCurrentWindow();
-	if (isMacOS) {
-		return win.isMaximized();
-	}
-	return win.isFullscreen();
+	return get(playerFullscreen);
 }
 
 export function isPlayerInitialized(): boolean {

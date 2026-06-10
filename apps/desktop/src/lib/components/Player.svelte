@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { resizeMpvOverlay, hideMpvOverlay, showMpvOverlay } from '$lib/services/player-service';
+	import { resizeMpvOverlay, hideMpvOverlay, showMpvOverlay, exitFullscreen } from '$lib/services/player-service';
 	import { playerActive } from '$lib/stores/player-ui';
 	import { osdMessage } from '$lib/stores/player';
 	import { controlsHideDelay } from '$lib/stores/settings';
@@ -144,7 +144,8 @@
 			resizeObserver.disconnect();
 			resizeObserver = null;
 		}
-		// Hide mpv when navigating away from the player page
+		// Exit immersive fullscreen and hide mpv when leaving the player page
+		exitFullscreen();
 		hideMpvOverlay();
 	});
 

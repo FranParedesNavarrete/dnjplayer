@@ -14,3 +14,7 @@ export const playlistIndex = writable<number>(0);
 
 // UI state for player page
 export const showControls = writable(true);
+
+// Whether the player is in immersive fullscreen (sidebar/chrome hidden, video
+// fills the whole window). Drives the layout + player page CSS.
+export const playerFullscreen = writable(false);
