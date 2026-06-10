@@ -17,6 +17,8 @@
     "sql:allow-close",
     "fs:default",
     "notification:default",
-    "libmpv:default"
+    "libmpv:default",
+    "updater:default",
+    "process:default"
   ]
 }

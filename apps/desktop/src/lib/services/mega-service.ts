@@ -38,3 +38,8 @@ export async function megaSearch(query: string, roots: string[]): Promise<MegaEn
 	return invoke('mega_search', { query, roots });
 }
 
+/** Open the official MEGAcmd download page (auto-detects OS) in the browser. */
+export async function megaOpenInstallPage(): Promise<void> {
+	return invoke('mega_open_install_page');
+}
+

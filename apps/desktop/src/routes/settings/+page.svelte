@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Cloud, Sparkles, Sun, Moon, Palette, Link, Play } from 'lucide-svelte';
+	import { Cloud, Sparkles, Sun, Moon, Palette, Link, Play, RefreshCw } from 'lucide-svelte';
+	import { getVersion } from '@tauri-apps/api/app';
 	import { theme } from '$lib/stores/theme';
+	import { updatePhase, updateError } from '$lib/stores/update';
+	import { checkForUpdates } from '$lib/services/update-service';
 	import {
 		language,
 		defaultShaderMode,
@@ -14,12 +17,17 @@
 	import { t } from '$lib/i18n';
 	import type { ShaderMode, ShaderVariant } from '$lib/types/player';
 
+	let appVersion = $state('');
+
 	onMount(() => {
 		megaCheckStatus().then((status) => {
 			isConnected.set(status.logged_in);
 			if (status.email) userEmail.set(status.email);
 		}).catch(() => {});
+		getVersion().then((v) => (appVersion = v)).catch(() => {});
 	});
+
+	const checkingUpdate = $derived($updatePhase === 'checking');
 
 	function handleLanguageChange(e: Event) {
 		const target = e.target as HTMLSelectElement;
@@ -159,6 +167,30 @@
 					<option value="30000">{$t['settings.delay30']}</option>
 					<option value="60000">{$t['settings.delay60']}</option>
 				</select>
+			</div>
+		</section>
+
+		<section class="settings-section">
+			<div class="section-title">
+				<RefreshCw size={18} strokeWidth={1.8} />
+				<h3>{$t['nav.settings']}</h3>
+			</div>
+			<div class="setting-row">
+				<span class="setting-label">{$t['update.currentVersion']}</span>
+				<span class="setting-value">v{appVersion}</span>
+			</div>
+			<div class="setting-row">
+				<div class="connector-info">
+					{#if $updatePhase === 'uptodate'}
+						<span class="setting-value connected">{$t['update.upToDate']}</span>
+					{:else if $updatePhase === 'error'}
+						<span class="setting-value disconnected">{$updateError ?? $t['update.error']}</span>
+					{/if}
+				</div>
+				<button class="theme-toggle" onclick={() => checkForUpdates(false)} disabled={checkingUpdate}>
+					<RefreshCw size={16} strokeWidth={2} />
+					<span>{checkingUpdate ? $t['update.checking'] : $t['update.check']}</span>
+				</button>
 			</div>
 		</section>
 	</div>

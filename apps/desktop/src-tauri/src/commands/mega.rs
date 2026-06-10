@@ -377,6 +377,27 @@ pub async fn mega_get_webdav_url(remote_path: String) -> Result<String, String> 
     webdav::serve(&remote_path)
 }
 
+/// Open the official MEGAcmd download page in the user's browser. The page
+/// auto-detects the OS and serves the correct installer. We intentionally open
+/// the official page rather than hardcoding installer URLs (MEGA does not publish
+/// stable direct-download links — everything is resolved dynamically there).
+#[tauri::command]
+pub fn mega_open_install_page() -> Result<(), String> {
+    use crate::util::command::hidden_command;
+    const URL: &str = "https://mega.nz/cmd";
+
+    #[cfg(target_os = "macos")]
+    let spawn = hidden_command("open").arg(URL).spawn();
+    #[cfg(target_os = "windows")]
+    let spawn = hidden_command("cmd").args(["/C", "start", "", URL]).spawn();
+    #[cfg(target_os = "linux")]
+    let spawn = hidden_command("xdg-open").arg(URL).spawn();
+
+    spawn
+        .map(|_| ())
+        .map_err(|e| format!("Failed to open browser: {}", e))
+}
+
 #[tauri::command]
 pub async fn mega_stop_webdav() -> Result<String, String> {
     webdav::stop_all()?;
