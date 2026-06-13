@@ -77,10 +77,12 @@ if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
 pnpm install
 pnpm tauri build --target $Target
 
-# Locate the NSIS updater installer and its signature.
+# Locate THIS version's NSIS installer + signature. Old builds may still be in
+# the folder, so filter by $version (a plain *-setup.exe + Select -First 1 picks
+# the first alphabetically, e.g. an older 1.3.0 instead of 1.3.1).
 $nsisDir = "src-tauri\target\$Target\release\bundle\nsis"
-$installer = Get-ChildItem $nsisDir -Filter "*-setup.exe" | Select-Object -First 1
-$sigFile   = Get-ChildItem $nsisDir -Filter "*-setup.exe.sig" | Select-Object -First 1
+$installer = Get-ChildItem $nsisDir -Filter "*-setup.exe" | Where-Object { $_.Name -like "*$version*" } | Select-Object -First 1
+$sigFile   = Get-ChildItem $nsisDir -Filter "*-setup.exe.sig" | Where-Object { $_.Name -like "*$version*" } | Select-Object -First 1
 if (-not $installer -or -not $sigFile) {
   throw "NSIS installer/.sig not found in $nsisDir (is createUpdaterArtifacts on?)"
 }
