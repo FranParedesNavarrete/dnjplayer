@@ -3,14 +3,14 @@
 	import { t } from '$lib/i18n';
 	import { playlist, playlistIndex, playerActive } from '$lib/stores/player-ui';
 	import {
-		getCachedWebdavUrl,
+		resolvePlayableUrl,
 		prefetchAround,
 		invalidate,
 		clearPrefetchCache
 	} from '$lib/services/prefetch-service';
 	import { loadVideo } from '$lib/services/player-service';
 	import { setProperty } from 'tauri-plugin-libmpv-api';
-	import { markWatched } from '$lib/services/db-service';
+	import { markWatched, toDbKey } from '$lib/services/db-service';
 	import { log } from '$lib/log';
 	import { goto } from '$app/navigation';
 
@@ -22,11 +22,12 @@
 		playlistIndex.set(index);
 
 		try {
-			const url = await getCachedWebdavUrl(item.megaPath);
+			const url = await resolvePlayableUrl(item);
 			await loadVideo(url, item.name);
 			await setProperty('pause', 'no');
 			prefetchAround(index);
-			markWatched(item.megaPath, item.name).catch((e) =>
+			// toDbKey is required so local items aren't stored as bare (= Mega) keys.
+			markWatched(toDbKey(item.source, item.path), item.name).catch((e) =>
 				log.warn('[queue] Failed to mark watched:', e)
 			);
 			goto('/player');
@@ -40,7 +41,7 @@
 		const currentIdx = $playlistIndex;
 
 		const removed = items[index];
-		if (removed) invalidate(removed.megaPath);
+		if (removed) invalidate(removed.path);
 
 		items.splice(index, 1);
 		playlist.set(items);
