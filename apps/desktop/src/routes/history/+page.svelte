@@ -1,17 +1,50 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { getHistory, removeFromHistory, clearHistory, getFavorites, removeFavorite } from '$lib/services/db-service';
-	import { megaGetWebdavUrl } from '$lib/services/mega-service';
+	import { getHistory, removeFromHistory, clearHistory, getFavorites, removeFavorite, parseSourceKey } from '$lib/services/db-service';
+	import { resolvePlayableUrl } from '$lib/services/prefetch-service';
 	import { loadVideo } from '$lib/services/player-service';
 	import { currentPath } from '$lib/stores/mega';
 	import { playlist, playlistIndex } from '$lib/stores/player-ui';
 	import { log } from '$lib/log';
 	import { t } from '$lib/i18n';
 	import type { HistoryEntry, FavoriteEntry } from '$lib/types/history';
-	import { Clock, Heart, Film, Folder, Trash2, Play, Search, X } from 'lucide-svelte';
+	import type { MediaSource, PlaylistItem } from '$lib/types/player';
+	import { Clock, Heart, Film, Folder, Trash2, Search, X, Cloud, HardDrive } from 'lucide-svelte';
 
 	type TabId = 'history' | 'favorites';
+
+	// History and favorites are shared by both media sources: their row key
+	// (`mega_path`) is source-namespaced, so nothing here may assume Mega. Rows
+	// are decorated once with the parsed source + bare path, and everything
+	// downstream (playback, folder navigation, display) uses those instead of the
+	// raw key. The raw key is still what the DB layer wants back, so removals and
+	// the `loadingPlay` marker keep using `entry.mega_path` verbatim.
+	interface Sourced {
+		/** Where the row lives, derived from the stored key. */
+		source: MediaSource;
+		/**
+		 * Bare, human-readable path: the Mega remote path, or the local
+		 * filesystem path with the internal `file://` key prefix stripped.
+		 */
+		path: string;
+	}
+	type SourcedHistory = HistoryEntry & Sourced;
+	type SourcedFavorite = FavoriteEntry & Sourced;
+	/** Minimum shape `playEntry` needs -- satisfied by both decorated types. */
+	type PlayableEntry = { mega_path: string; filename: string } & Sourced;
+
+	function withSource<T extends { mega_path: string }>(entry: T): T & Sourced {
+		return { ...entry, ...parseSourceKey(entry.mega_path) };
+	}
+
+	/**
+	 * Human label for a source. Reuses existing nav/browser translations rather
+	 * than introducing history-specific keys.
+	 */
+	function sourceLabel(source: MediaSource): string {
+		return source === 'local' ? $t['local.title'] : $t['browser.cloudDrive'];
+	}
 
 	let activeTab = $state<TabId>('history');
 	let historyItems = $state<HistoryEntry[]>([]);
@@ -46,60 +79,70 @@
 		confirmClear = false;
 	}
 
-	let filteredHistory = $derived(
-		searchQuery
-			? historyItems.filter((e) => e.filename.toLowerCase().includes(searchQuery.toLowerCase()))
-			: historyItems
+	// Filename search works the same for both sources: local rows store their
+	// basename in `filename` exactly like Mega rows do, so the filter needs no
+	// source awareness (and never sees the `file://` key prefix).
+	function matchesSearch(entry: { filename: string }): boolean {
+		if (!searchQuery) return true;
+		return entry.filename.toLowerCase().includes(searchQuery.toLowerCase());
+	}
+
+	let filteredHistory = $derived<SourcedHistory[]>(
+		historyItems.filter(matchesSearch).map(withSource)
 	);
 
-	let filteredFavorites = $derived(
-		searchQuery
-			? favoriteItems.filter((e) => e.filename.toLowerCase().includes(searchQuery.toLowerCase()))
-			: favoriteItems
+	let filteredFavorites = $derived<SourcedFavorite[]>(
+		favoriteItems.filter(matchesSearch).map(withSource)
 	);
 
-	async function playHistoryItem(entry: HistoryEntry) {
+	/**
+	 * Play a single history/favorite row, honouring its real source: local rows
+	 * resolve to their filesystem path, Mega rows to a WebDAV URL.
+	 *
+	 * Note: this deliberately does not call `markWatched()`, so replaying from
+	 * this page does not bump `play_count` -- same as before.
+	 */
+	async function playEntry(entry: PlayableEntry) {
 		loadingPlay = entry.mega_path;
 		error = '';
 		try {
-			playlist.set([{ megaPath: entry.mega_path, name: entry.filename }]);
+			const item: PlaylistItem = { source: entry.source, path: entry.path, name: entry.filename };
+			playlist.set([item]);
 			playlistIndex.set(0);
-			const url = await megaGetWebdavUrl(entry.mega_path);
+			const url = await resolvePlayableUrl(item);
 			await loadVideo(url, entry.filename);
 			goto('/player');
 		} catch (e) {
-			log.error('[History] playHistoryItem failed:', e);
+			log.error('[History] playEntry failed:', e);
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			loadingPlay = '';
 		}
 	}
 
-	async function playFavoriteFile(entry: FavoriteEntry) {
-		loadingPlay = entry.mega_path;
-		error = '';
-		try {
-			playlist.set([{ megaPath: entry.mega_path, name: entry.filename }]);
-			playlistIndex.set(0);
-			const url = await megaGetWebdavUrl(entry.mega_path);
-			await loadVideo(url, entry.filename);
-			goto('/player');
-		} catch (e) {
-			log.error('[History] playFavoriteFile failed:', e);
-			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			loadingPlay = '';
+	/**
+	 * Open a favorited folder in the browser that owns it.
+	 *
+	 * Mega folders go through the mega store as before. Local folders go to the
+	 * `/local` route, which reads the folder to open from the `path` query param
+	 * (URL-encoded here): this page owns no local-browser state, so the URL is
+	 * the hand-off contract. If that param were ever ignored, navigation still
+	 * lands on the right page instead of failing.
+	 */
+	function navigateToFolder(entry: SourcedFavorite) {
+		if (entry.source === 'local') {
+			goto(`/local?path=${encodeURIComponent(entry.path)}`);
+			return;
 		}
-	}
-
-	function navigateToFolder(entry: FavoriteEntry) {
-		currentPath.set(entry.mega_path);
+		currentPath.set(entry.path);
 		goto('/');
 	}
 
-	async function handleRemoveHistory(megaPath: string) {
-		await removeFromHistory(megaPath);
-		historyItems = historyItems.filter((e) => e.mega_path !== megaPath);
+	// Removals address rows by their stored key, prefix and all -- never the bare
+	// path, which would miss every local row.
+	async function handleRemoveHistory(key: string) {
+		await removeFromHistory(key);
+		historyItems = historyItems.filter((e) => e.mega_path !== key);
 	}
 
 	async function handleClearHistory() {
@@ -112,9 +155,9 @@
 		confirmClear = false;
 	}
 
-	async function handleRemoveFavorite(megaPath: string) {
-		await removeFavorite(megaPath);
-		favoriteItems = favoriteItems.filter((e) => e.mega_path !== megaPath);
+	async function handleRemoveFavorite(key: string) {
+		await removeFavorite(key);
+		favoriteItems = favoriteItems.filter((e) => e.mega_path !== key);
 	}
 
 	function formatDate(dateStr: string): string {
@@ -187,9 +230,16 @@
 			<div class="entry-list">
 				{#each filteredHistory as entry (entry.mega_path)}
 					<div class="entry-row" class:is-loading={loadingPlay === entry.mega_path}>
-						<button class="entry-main" onclick={() => playHistoryItem(entry)} disabled={!!loadingPlay}>
+						<button class="entry-main" onclick={() => playEntry(entry)} disabled={!!loadingPlay} title={entry.path}>
 							<span class="entry-icon"><Film size={16} strokeWidth={1.8} /></span>
 							<span class="entry-name">{entry.filename}</span>
+							<span class="entry-source" title={sourceLabel(entry.source)}>
+								{#if entry.source === 'local'}
+									<HardDrive size={13} strokeWidth={1.8} />
+								{:else}
+									<Cloud size={13} strokeWidth={1.8} />
+								{/if}
+							</span>
 							<span class="entry-meta">{$t['history.playCount'].replace('{count}', String(entry.play_count))}</span>
 							<span class="entry-date">{formatDate(entry.watched_at)}</span>
 						</button>
@@ -213,8 +263,9 @@
 					<div class="entry-row">
 						<button
 							class="entry-main"
-							onclick={() => entry.entry_type === 'folder' ? navigateToFolder(entry) : playFavoriteFile(entry)}
+							onclick={() => entry.entry_type === 'folder' ? navigateToFolder(entry) : playEntry(entry)}
 							disabled={!!loadingPlay}
+							title={entry.path}
 						>
 							<span class="entry-icon" class:folder-icon={entry.entry_type === 'folder'}>
 								{#if entry.entry_type === 'folder'}
@@ -224,6 +275,13 @@
 								{/if}
 							</span>
 							<span class="entry-name">{entry.filename}</span>
+							<span class="entry-source" title={sourceLabel(entry.source)}>
+								{#if entry.source === 'local'}
+									<HardDrive size={13} strokeWidth={1.8} />
+								{:else}
+									<Cloud size={13} strokeWidth={1.8} />
+								{/if}
+							</span>
 							<span class="entry-date">{formatDate(entry.favorited_at)}</span>
 							{#if entry.entry_type === 'folder'}
 								<span class="entry-badge">{$t['history.openFolder']}</span>
@@ -479,6 +537,15 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	/* Discreet source hint (Mega cloud vs local disk); tooltip carries the label. */
+	.entry-source {
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+		color: var(--text-muted);
+		opacity: 0.75;
 	}
 
 	.entry-meta {
