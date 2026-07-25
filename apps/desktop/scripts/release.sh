@@ -56,9 +56,35 @@ if [ ! -d "$STAGED_APP" ]; then
 fi
 
 # 2. Pack the updater payload from the SIGNED staged app and sign it.
+#
+# COPYFILE_DISABLE=1 is REQUIRED, not cosmetic. codesign leaves extended
+# attributes on the bundle, and macOS bsdtar stores those as separate AppleDouble
+# `._name` entries. The updater walks every entry and strips the first path
+# component (`entry.path().iter().skip(1)`), so the top-level `._dnjplayer.app`
+# collapses to an empty path and it tries to write a file over the extraction
+# directory itself, failing with:
+#   failed to unpack `._dnjplayer.app` into `/var/.../tauri_updated_appXXXX/`
+# This silently broke every auto-update from 1.3.0 to 1.4.0.
+#
+# The trap: `tar -tzf` on macOS HIDES AppleDouble entries (it treats them as
+# metadata), so a manual listing looks perfectly clean. Only a non-Apple reader
+# -- Python's tarfile, or the Rust tar crate the updater uses -- shows them.
+# That is why the guard below uses Python and not tar.
 echo "==> Creating updater tarball from the signed bundle..."
 rm -f "$TARBALL" "$TARBALL.sig"
-tar -czf "$TARBALL" -C "$DNJ_STAGING" "dnjplayer.app"
+COPYFILE_DISABLE=1 tar -czf "$TARBALL" -C "$DNJ_STAGING" "dnjplayer.app"
+
+echo "==> Verifying the tarball has no AppleDouble entries..."
+python3 - "$TARBALL" <<'PY'
+import sys, tarfile
+names = tarfile.open(sys.argv[1]).getnames()
+bad = [n for n in names if n.startswith("._") or "/._" in n]
+if bad:
+    print(f"ERROR: {len(bad)} AppleDouble entries in the updater payload, e.g. {bad[:3]}")
+    print("The updater cannot unpack this. Is COPYFILE_DISABLE=1 still set on the tar call?")
+    sys.exit(1)
+print(f"    {len(names)} entries, no AppleDouble. Payload is unpackable.")
+PY
 
 echo "==> Signing tarball..."
 pnpm --filter desktop exec tauri signer sign -f "$KEY_PATH" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$TARBALL"
