@@ -37,6 +37,12 @@ pub fn run() {
             sql: include_str!("db/migrations/004_favorites.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 5,
+            description: "create local roots table",
+            sql: include_str!("db/migrations/005_local_roots.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -53,6 +59,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_libmpv::init())
         .invoke_handler(tauri::generate_handler![
             commands::mega::mega_check_status,
@@ -66,6 +73,10 @@ pub fn run() {
             commands::mega::mega_get_webdav_url,
             commands::mega::mega_stop_webdav,
             commands::mega::mega_open_install_page,
+            commands::local::local_list_dir,
+            commands::local::local_list_roots,
+            commands::local::local_scan_folder,
+            commands::local::local_search,
             commands::pipeline::submit_job,
             commands::pipeline::get_jobs,
             commands::pipeline::cancel_job,

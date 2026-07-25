@@ -4,6 +4,7 @@ import {
 	setProperty,
 	getProperty,
 	observeProperties,
+	listenEvents,
 	destroy,
 	type MpvObservableProperty,
 	type MpvConfig
@@ -23,14 +24,23 @@ import {
 	contrast,
 	saturation,
 	gamma,
-	hue
+	hue,
+	audioTracks,
+	subtitleTracks,
+	currentAid,
+	currentSid
 } from '$lib/stores/player';
 import { get } from 'svelte/store';
 import { playerActive, currentVideoUrl, currentVideoTitle, playlist, playlistIndex, playerFullscreen } from '$lib/stores/player-ui';
-import type { VideoAdjustments, ShaderMode, ShaderVariant } from '$lib/types/player';
-import { markWatched } from '$lib/services/db-service';
-import { getCachedWebdavUrl, prefetchAround } from '$lib/services/prefetch-service';
-import { defaultShaderMode, defaultShaderVariant } from '$lib/stores/settings';
+import type { VideoAdjustments, ShaderMode, ShaderVariant, MediaTrack } from '$lib/types/player';
+import { markWatched, toDbKey } from '$lib/services/db-service';
+import { resolvePlayableUrl, prefetchAround } from '$lib/services/prefetch-service';
+import {
+	defaultShaderMode,
+	defaultShaderVariant,
+	preferredAudioLang,
+	preferredSubtitleLang
+} from '$lib/stores/settings';
 import { activeShaderMode, shaderVariant as activeShaderVariant } from '$lib/stores/player';
 import { resolveResource } from '@tauri-apps/api/path';
 import { log } from '$lib/log';
@@ -46,42 +56,89 @@ const OBSERVED_PROPERTIES = [
 	['volume', 'double', 'none'],
 	['speed', 'double', 'none'],
 	['eof-reached', 'flag', 'none'],
+	// Track selection. `track-list` is an mpv node (array of maps), so it needs
+	// the 'node' format — the plugin converts MPV_FORMAT_NODE (incl. node arrays
+	// and node maps) into plain JSON, so `data` arrives as a JS array of objects.
+	['track-list', 'node', 'none'],
+	// `aid`/`sid` MUST be observed as 'string', not 'int64': when the stream is
+	// disabled mpv reports the literal string "no" (and "auto" before selection),
+	// which would come back as garbage/null under a numeric format.
+	['aid', 'string', 'none'],
+	['sid', 'string', 'none'],
 ] as const satisfies MpvObservableProperty[];
 
 const isMacOS = navigator.platform?.toLowerCase().includes('mac') ?? false;
 const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
 
-const MPV_CONFIG: MpvConfig = {
-	initialOptions: {
-		'hwdec': 'auto-safe',
-		'keep-open': 'yes',
-		'osc': 'no',
-		'input-default-bindings': 'no',
-		'input-vo-keyboard': 'no',
-		// On macOS/Windows, mpv must create its own separate window so we can attach it
-		// as a child/owned window of the Tauri window via native APIs.
-		// 'force-window' ensures mpv creates a window; we override 'wid' to prevent
-		// the plugin from injecting the Tauri HWND (which would embed behind the webview).
-		// wid=0 means "no parent window" so mpv creates a standalone top-level window.
-		...((isMacOS || isWindows) ? { 'force-window': 'yes' } : {}),
-		...(isWindows ? { 'wid': 0 } : {}),
-	},
-	observedProperties: OBSERVED_PROPERTIES,
-};
+/**
+ * Build the mpv init config. This is a function (not a const) so the persisted
+ * language preferences are read at init time rather than at module load time.
+ */
+function buildMpvConfig(): MpvConfig {
+	const alang = get(preferredAudioLang);
+	const slang = get(preferredSubtitleLang);
+	return {
+		initialOptions: {
+			'hwdec': 'auto-safe',
+			'keep-open': 'yes',
+			'osc': 'no',
+			'input-default-bindings': 'no',
+			'input-vo-keyboard': 'no',
+			// Auto-load sibling subtitle files ("<video>.es.srt", "Subs/<video>.ass", …)
+			// for local playback. Harmless for Mega WebDAV streams: mpv can't list a
+			// remote directory over HTTP, so it simply finds nothing.
+			'sub-auto': 'fuzzy',
+			// Preferred track languages. 'auto' => don't pass the option and let mpv
+			// use its own defaults (usually the file's `default` flag order).
+			...(alang !== 'auto' ? { 'alang': alang } : {}),
+			...(slang !== 'auto' ? { 'slang': slang } : {}),
+			// On macOS/Windows, mpv must create its own separate window so we can attach it
+			// as a child/owned window of the Tauri window via native APIs.
+			// 'force-window' ensures mpv creates a window; we override 'wid' to prevent
+			// the plugin from injecting the Tauri HWND (which would embed behind the webview).
+			// wid=0 means "no parent window" so mpv creates a standalone top-level window.
+			...((isMacOS || isWindows) ? { 'force-window': 'yes' } : {}),
+			...(isWindows ? { 'wid': 0 } : {}),
+		},
+		observedProperties: OBSERVED_PROPERTIES,
+	};
+}
 
 let unlistenProperties: (() => void) | null = null;
+let unlistenEvents: (() => void) | null = null;
+let unsubscribeLangPrefs: (() => void)[] = [];
 let initialized = false;
 let mpvWindowAttached = false;
 
+// In-flight init, shared by concurrent callers. Without this, two overlapping
+// loadVideo() calls both see `initialized === false` and run init() twice, and
+// the second observeProperties/listenEvents pair overwrites the first handles,
+// which then can never be unregistered (double-processed events + a leak).
+let initPromise: Promise<void> | null = null;
+
+// Bumped on every loadVideo(). Async track reads compare against it so a reply
+// for the previous file can't overwrite the current file's tracks.
+let loadGeneration = 0;
+// Watchdog timer id, so it can be cancelled on teardown or on the next file.
+
 /**
  * Initialize mpv player and start observing properties.
+ * Concurrent calls share a single initialization.
  */
 export async function initPlayer(): Promise<void> {
 	if (initialized) return;
+	if (initPromise) return initPromise;
+	initPromise = doInitPlayer().finally(() => {
+		initPromise = null;
+	});
+	return initPromise;
+}
 
-	log.info('[player] Initializing mpv with config:', JSON.stringify(MPV_CONFIG.initialOptions));
+async function doInitPlayer(): Promise<void> {
+	const mpvConfig = buildMpvConfig();
+	log.info('[player] Initializing mpv with config:', JSON.stringify(mpvConfig.initialOptions));
 	try {
-		await init(MPV_CONFIG);
+		await init(mpvConfig);
 	} catch (e) {
 		log.error('[player] init() FAILED:', e);
 		throw e;
@@ -117,6 +174,18 @@ export async function initPlayer(): Promise<void> {
 				case 'speed':
 					if (typeof data === 'number') speed.set(data);
 					break;
+				case 'track-list':
+					// Ignored when the fallback strategy is active — see
+					// The ONLY safe source for the track list: observed, never pulled.
+					// See the getProperty(..., 'node') warning further down.
+					applyTrackList(data);
+					break;
+				case 'aid':
+					currentAid.set(parseTrackId(data));
+					break;
+				case 'sid':
+					currentSid.set(parseTrackId(data));
+					break;
 				case 'eof-reached':
 					// Reliable end-of-file signal (keep-open pauses at EOF). Advance
 					// to the next item, or — if this was the last one — leave
@@ -134,6 +203,16 @@ export async function initPlayer(): Promise<void> {
 			}
 		}
 	);
+
+	// 'file-loaded' is only used to re-assert the selected track ids; the track
+	// list itself arrives through the observed 'track-list' property. See the
+	// comment on refreshSelectedTracks() for why we never *pull* track-list.
+	unlistenEvents = await listenEvents((event) => {
+		if (event.event !== 'file-loaded') return;
+		refreshSelectedTracks();
+	});
+
+	attachLanguagePreferenceWatchers();
 }
 
 /**
@@ -145,6 +224,14 @@ export async function destroyPlayer(): Promise<void> {
 		unlistenProperties();
 		unlistenProperties = null;
 	}
+	if (unlistenEvents) {
+		unlistenEvents();
+		unlistenEvents = null;
+	}
+	// Invalidate in-flight track reads so a reply can't land on a fresh instance.
+	loadGeneration++;
+	for (const unsub of unsubscribeLangPrefs) unsub();
+	unsubscribeLangPrefs = [];
 	await destroy();
 	initialized = false;
 	playerActive.set(false);
@@ -160,6 +247,15 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 		log.info('[player] Not initialized, calling initPlayer...');
 		await initPlayer();
 	}
+
+	// Invalidate the previous file's tracks straight away. Leaving them in place
+	// would show the old file's audio/subtitle options until mpv reports the new
+	// ones, and picking one would set a track id that belongs to another file.
+	loadGeneration++;
+	audioTracks.set([]);
+	subtitleTracks.set([]);
+	currentAid.set(null);
+	currentSid.set(null);
 
 	log.info('[player] Sending loadfile command...');
 	try {
@@ -312,6 +408,10 @@ export async function stopVideo(): Promise<void> {
 	currentTime.set(null);
 	duration.set(null);
 	filename.set(null);
+	audioTracks.set([]);
+	subtitleTracks.set([]);
+	currentAid.set(null);
+	currentSid.set(null);
 }
 
 // --- Playback controls ---
@@ -384,6 +484,308 @@ export function getDefaultAdjustments(): VideoAdjustments {
 		gamma: 0,
 		hue: 0,
 	};
+}
+
+// --- Audio / subtitle tracks ---
+
+/**
+ * !!! NEVER CALL getProperty(..., 'node') !!!
+ *
+ * The bundled native wrapper (src-tauri/lib/libmpv-wrapper.dylib) has a
+ * memory-management bug on the property *pull* path: `MpvNode::from_node`, as
+ * reached from `mpv_wrapper_get_property`, frees a pointer it does not own. That
+ * trips libmalloc and aborts the ENTIRE app with SIGABRT — not a catchable JS
+ * error, the process is gone.
+ *
+ * Confirmed from a real crash report (Abort trap: 6, thread `tokio-rt-worker`):
+ *   ___BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED
+ *   mpv_wrapper::property::MpvNode::from_node
+ *   mpv_wrapper_get_property
+ *   tauri_plugin_libmpv::commands::get_property
+ * reproduced by pressing the audio-cycle shortcut, which used to pull
+ * 'track-list' as a node.
+ *
+ * The *observed* path (`['track-list', 'node']` in OBSERVED_PROPERTIES) is fine:
+ * there mpv owns the node and frees it itself, so the faulty free never runs.
+ * That is why the track list is only ever received via observeProperties, and
+ * why the previous "pull it manually" watchdog had to go — it would have turned
+ * every file load into a coin flip on crashing.
+ *
+ * Scalar formats ('string' | 'flag' | 'int64' | 'double') do not go through
+ * from_node and are safe to pull.
+ */
+
+/** Coerce mpv's loose booleans ("yes"/"no"/1/0/true) into a real boolean. */
+function asFlag(value: unknown): boolean {
+	if (typeof value === 'boolean') return value;
+	if (typeof value === 'number') return value !== 0;
+	if (typeof value === 'string') return value === 'yes' || value === 'true' || value === '1';
+	return false;
+}
+
+/** Non-empty string or undefined — mpv omits absent fields, and can send "". */
+function asOptionalString(value: unknown): string | undefined {
+	if (typeof value !== 'string') return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Parse an `aid`/`sid` value. mpv returns the literal "no" when the stream is
+ * disabled and "auto" before a track has been picked, otherwise a track id
+ * (which may arrive as a number or as a numeric string).
+ */
+function parseTrackId(value: unknown): number | 'no' | null {
+	if (value == null) return null;
+	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+	if (typeof value === 'boolean') return value ? null : 'no';
+	if (typeof value === 'string') {
+		if (value === 'no' || value === 'false') return 'no';
+		if (value === 'auto' || value === '') return null;
+		const parsed = parseInt(value, 10);
+		return Number.isNaN(parsed) ? null : parsed;
+	}
+	return null;
+}
+
+/**
+ * Defensive parser for mpv's `track-list`. Keys are kebab/snake-cased and most
+ * fields are optional, so nothing here is assumed: entries without a usable
+ * numeric `id` or a known `type` are dropped instead of producing junk tracks.
+ */
+export function parseTrackList(raw: unknown): MediaTrack[] {
+	// The plugin normally hands over already-decoded JSON, but tolerate a string
+	// payload in case a transport ever passes the node through verbatim.
+	let value = raw;
+	if (typeof value === 'string') {
+		try {
+			value = JSON.parse(value);
+		} catch {
+			return [];
+		}
+	}
+	if (!Array.isArray(value)) return [];
+
+	const tracks: MediaTrack[] = [];
+	for (const entry of value) {
+		if (!entry || typeof entry !== 'object') continue;
+		const rec = entry as Record<string, unknown>;
+
+		const rawType = rec['type'];
+		if (rawType !== 'video' && rawType !== 'audio' && rawType !== 'sub') continue;
+
+		const rawId = rec['id'];
+		const id = typeof rawId === 'number' ? rawId : parseInt(String(rawId ?? ''), 10);
+		if (!Number.isFinite(id)) continue;
+
+		tracks.push({
+			id,
+			type: rawType,
+			title: asOptionalString(rec['title']),
+			lang: asOptionalString(rec['lang']),
+			codec: asOptionalString(rec['codec']),
+			selected: asFlag(rec['selected']),
+			// mpv sets `external: true` and fills `external-filename` for sub-add'ed
+			// or auto-loaded sidecar files; treat either as external.
+			external: asFlag(rec['external']) || asOptionalString(rec['external-filename']) !== undefined,
+			default: asFlag(rec['default']),
+			forced: asFlag(rec['forced']),
+		});
+	}
+	return tracks;
+}
+
+/** Parse a raw track-list payload into the stores. Returns the parsed tracks. */
+function applyTrackList(raw: unknown): MediaTrack[] {
+	const tracks = parseTrackList(raw);
+	const audio = tracks.filter((t) => t.type === 'audio');
+	const subs = tracks.filter((t) => t.type === 'sub');
+	audioTracks.set(audio);
+	subtitleTracks.set(subs);
+	return tracks;
+}
+
+/**
+ * Human label for the OSD. mpv renders this text itself (not the DOM), so it
+ * deliberately bypasses i18n and is built from the track's own metadata.
+ */
+function trackLabel(track: MediaTrack | undefined, kind: 'audio' | 'sub'): string {
+	const prefix = kind === 'audio' ? 'Audio' : 'Subtitles';
+	if (!track) return `${prefix}: off`;
+	const parts = [track.lang?.toUpperCase(), track.title].filter(Boolean);
+	const body = parts.length > 0 ? parts.join(' — ') : `Track ${track.id}`;
+	return `${prefix}: ${body}`;
+}
+
+/**
+ * Re-read only the SELECTED track ids (aid/sid) from mpv.
+ *
+ * Deliberately does not touch the track list: pulling 'track-list' would need
+ * format 'node', which crashes the process (see the big warning above). The list
+ * itself is kept up to date by the observed property.
+ *
+ * Guarded by the load generation so a reply for the previous file can't overwrite
+ * the current one.
+ */
+export async function refreshSelectedTracks(): Promise<void> {
+	if (!initialized) return;
+	const generation = loadGeneration;
+	try {
+		const aid = await getProperty('aid', 'string');
+		const sid = await getProperty('sid', 'string');
+		if (generation !== loadGeneration) return;
+		currentAid.set(parseTrackId(aid));
+		currentSid.set(parseTrackId(sid));
+	} catch (e) {
+		log.warn('[player] Failed to refresh selected tracks:', e);
+	}
+}
+
+/** Find the track matching an aid/sid value in one of the track stores. */
+function findTrack(tracks: MediaTrack[], id: number | 'no' | null): MediaTrack | undefined {
+	if (typeof id !== 'number') return undefined;
+	return tracks.find((t) => t.id === id);
+}
+
+/**
+ * Select an audio track by mpv id, or 'no' to disable audio.
+ *
+ * The id is sent as a STRING on purpose. mpv's `aid` is a choice-or-number
+ * option ("auto" | "no" | <id>), and the plugin forwards whatever JSON type it
+ * is given; a string goes through mpv's own option parser, which is the form
+ * mpv documents and which behaves identically for every value.
+ */
+export async function setAudioTrack(id: number | 'no'): Promise<void> {
+	if (!initialized) return;
+	try {
+		await setProperty('aid', String(id));
+		currentAid.set(id);
+		// Read back what mpv actually selected: if the track can't be used (e.g. an
+		// unsupported codec) mpv may keep or drop the previous one, and the UI must
+		// show reality rather than our optimistic guess.
+		await refreshSelectedTracks();
+		log.info('[player] setAudioTrack requested', id, '-> mpv reports', get(currentAid));
+	} catch (e) {
+		log.warn('[player] Failed to set audio track:', e);
+	}
+}
+
+/** Select a subtitle track by mpv id, or 'no' to turn subtitles off. */
+export async function setSubtitleTrack(id: number | 'no'): Promise<void> {
+	if (!initialized) return;
+	try {
+		await setProperty('sid', String(id));
+		currentSid.set(id);
+		await refreshSelectedTracks();
+		log.info('[player] setSubtitleTrack requested', id, '-> mpv reports', get(currentSid));
+	} catch (e) {
+		log.warn('[player] Failed to set subtitle track:', e);
+	}
+}
+
+/**
+ * Cycle to the next audio track, showing the result on mpv's OSD.
+ *
+ * Rotates over our own observed track list instead of mpv's `cycle audio`,
+ * for two reasons:
+ *  - mpv's cycle includes the "disabled" state, so cycling through a 2-track
+ *    file goes 1 -> 2 -> no audio -> 1. Silently muting a video is not what a
+ *    user pressing "next audio track" is asking for. Subtitles do want that
+ *    extra step; audio doesn't.
+ *  - it lets us build the OSD label from the list we already hold, with no
+ *    property pull (see the getProperty(..., 'node') warning above).
+ */
+export async function cycleAudioTrack(): Promise<void> {
+	if (!initialized) return;
+	const tracks = get(audioTracks);
+	if (tracks.length === 0) return;
+
+	const current = get(currentAid);
+	const currentIdx = tracks.findIndex((t) => t.id === current);
+	const next = tracks[(currentIdx + 1) % tracks.length];
+
+	await setAudioTrack(next.id);
+	const label = trackLabel(findTrack(get(audioTracks), get(currentAid)), 'audio');
+	await command('show-text', [label, '2000']).catch(() => {});
+}
+
+/**
+ * Cycle to the next subtitle track, including an "off" step, showing it on the
+ * OSD. Order is: off -> track 1 -> ... -> track N -> off.
+ */
+export async function cycleSubtitleTrack(): Promise<void> {
+	if (!initialized) return;
+	const tracks = get(subtitleTracks);
+	if (tracks.length === 0) return;
+
+	// 'no' first so the rotation naturally includes turning subtitles off.
+	const sequence: (number | 'no')[] = ['no', ...tracks.map((t) => t.id)];
+	const current = get(currentSid);
+	const currentIdx = sequence.findIndex((entry) => entry === current);
+	const next = sequence[(currentIdx + 1) % sequence.length];
+
+	await setSubtitleTrack(next);
+	const label = trackLabel(findTrack(get(subtitleTracks), get(currentSid)), 'sub');
+	await command('show-text', [label, '2000']).catch(() => {});
+}
+
+/**
+ * Load an external subtitle file and select it right away.
+ * `path` is an absolute filesystem path (or any URL mpv can open).
+ */
+export async function addExternalSubtitle(path: string): Promise<void> {
+	if (!initialized) return;
+	log.info('[player] addExternalSubtitle:', path);
+	try {
+		await command('sub-add', [path, 'select']);
+		// The new track arrives via the observed 'track-list'; we only need to learn
+		// which sid mpv gave it.
+		await refreshSelectedTracks();
+	} catch (e) {
+		log.warn('[player] Failed to add external subtitle:', e);
+	}
+}
+
+/**
+ * Push the persisted language preferences into the running mpv instance.
+ * NOTE: mpv only consults `alang`/`slang` while *loading* a file, so this does
+ * NOT re-pick tracks for whatever is playing right now — it takes effect on the
+ * next file that gets loaded. Use setAudioTrack()/setSubtitleTrack() to change
+ * the current file's selection.
+ */
+export async function applyLanguagePreferences(): Promise<void> {
+	if (!initialized) return;
+	const alang = get(preferredAudioLang);
+	const slang = get(preferredSubtitleLang);
+	try {
+		// Empty string clears the preference list, restoring mpv's own defaults.
+		await setProperty('alang', alang === 'auto' ? '' : alang);
+		await setProperty('slang', slang === 'auto' ? '' : slang);
+		log.info('[player] Language preferences applied (next file):', { alang, slang });
+	} catch (e) {
+		log.warn('[player] Failed to apply language preferences:', e);
+	}
+}
+
+/**
+ * Keep mpv in sync when the user edits the language preferences in Settings.
+ * The initial values are already passed through buildMpvConfig(), so the first
+ * (immediate) emission of each store is skipped.
+ */
+function attachLanguagePreferenceWatchers(): void {
+	if (unsubscribeLangPrefs.length > 0) return;
+	for (const store of [preferredAudioLang, preferredSubtitleLang]) {
+		let first = true;
+		unsubscribeLangPrefs.push(
+			store.subscribe(() => {
+				if (first) {
+					first = false;
+					return;
+				}
+				applyLanguagePreferences();
+			})
+		);
+	}
 }
 
 // --- Anime4K shaders ---
@@ -524,11 +926,14 @@ export async function playNext(): Promise<boolean> {
 	playlistIndex.set(nextIdx);
 
 	try {
-		const url = await getCachedWebdavUrl(item.megaPath);
+		const url = await resolvePlayableUrl(item);
 		await loadVideo(url, item.name);
 		await setProperty('pause', 'no');
 		prefetchAround(nextIdx);
-		markWatched(item.megaPath, item.name).catch((e) =>
+		// Must go through toDbKey: a bare path is read back as a Mega path, which
+		// would hide the "watched" badge for local files and make the history row
+		// try to resolve a WebDAV URL for a local path.
+		markWatched(toDbKey(item.source, item.path), item.name).catch((e) =>
 			log.warn('[player] Failed to mark watched:', e)
 		);
 		return true;
@@ -548,11 +953,11 @@ export async function playPrev(): Promise<boolean> {
 	playlistIndex.set(prevIdx);
 
 	try {
-		const url = await getCachedWebdavUrl(item.megaPath);
+		const url = await resolvePlayableUrl(item);
 		await loadVideo(url, item.name);
 		await setProperty('pause', 'no');
 		prefetchAround(prevIdx);
-		markWatched(item.megaPath, item.name).catch((e) =>
+		markWatched(toDbKey(item.source, item.path), item.name).catch((e) =>
 			log.warn('[player] Failed to mark watched:', e)
 		);
 		return true;

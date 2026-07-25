@@ -1,4 +1,5 @@
 use crate::mega::{client, process, webdav};
+use crate::util::size::format_size;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -255,25 +256,6 @@ pub async fn mega_list_shares() -> Result<Vec<MegaShare>, String> {
     }
 
     Ok(shares)
-}
-
-fn format_size(bytes_str: &str) -> String {
-    let bytes: u64 = match bytes_str.parse() {
-        Ok(b) => b,
-        Err(_) => return bytes_str.to_string(),
-    };
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.0} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} B", bytes)
-    }
 }
 
 /// Maximum folder depth (relative to each search root) returned by `mega_search`.

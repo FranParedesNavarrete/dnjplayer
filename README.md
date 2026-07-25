@@ -1,12 +1,14 @@
 # dnjplayer
 
-Desktop multimedia streaming app with Mega.io integration and real-time Anime4K upscaling.
+Desktop multimedia player with Mega.io streaming, local file playback and real-time Anime4K upscaling.
 
-Stream video from your Mega.io cloud storage with an embedded libmpv player and GPU-accelerated anime upscaling shaders — all in one native desktop app.
+Play video from your Mega.io cloud storage *or* straight off your own drives, with an embedded libmpv player and GPU-accelerated anime upscaling shaders — all in one native desktop app.
 
 ## Features
 
 - **Mega.io streaming** — Browse your cloud drive and shared folders, stream any video via WebDAV
+- **Local files** — Browse your computer and external drives, save folders as reusable libraries, and play without installing a second player. Works with no MEGAcmd and no Mega account
+- **Audio & subtitle tracks** — Pick any audio or subtitle track in files that carry several, load an external subtitle file, and set a preferred language that is applied automatically
 - **Embedded player** — libmpv-based playback with hardware decoding, integrated into the app window on macOS, Windows and Linux
 - **Anime4K upscaling** — Real-time GPU shaders (Mode A/B/C) with variant selection (S/M/L/VL/UL), switchable via keyboard shortcuts
 - **History & Favorites** — Track watched content with play counts, bookmark files and folders for quick access
@@ -14,7 +16,6 @@ Stream video from your Mega.io cloud storage with an embedded libmpv player and 
 - **Playback controls** — Speed (0.25×–2×), volume (0–150%), seek bar, fullscreen, comprehensive keyboard shortcuts
 - **Dark & Light themes** — System-wide toggle with localStorage persistence
 - **Internationalization** — English and Spanish, extensible via `src/lib/i18n/`
-- **Pre-processing pipeline** — Optional Docker-based offline upscaling with FFmpeg + libplacebo + NVIDIA GPU
 
 ## Tech Stack
 
@@ -148,37 +149,33 @@ apps/desktop/src-tauri/target/release/bundle/
 ```
 dnjplayer/
 ├── apps/desktop/                  # Tauri + SvelteKit application
-│   ├── src/                       # SvelteKit frontend
-│   │   ├── routes/                # Pages: /, /history, /browse, /player, /queue, /settings
-│   │   └── lib/
-│   │       ├── components/        # Player, PlayerControls, FileBrowser, AuthForm
-│   │       ├── stores/            # Svelte writable stores (player, mega, theme, settings)
-│   │       ├── services/          # Tauri invoke wrappers (player, mega, pipeline, db)
-│   │       ├── types/             # Shared TypeScript types
-│   │       └── i18n/              # Translations (en, es)
-│   ├── src-tauri/                 # Rust backend
-│   │   ├── src/commands/          # Tauri commands (mega, library, player, pipeline)
-│   │   ├── src/mega/              # MEGAcmd process management & WebDAV
-│   │   ├── src/pipeline/          # Docker container management for pre-processing
-│   │   ├── src/db/                # SQLite migrations
-│   │   └── lib/                   # Native libraries (libmpv wrappers)
-│   └── static/shaders/            # Anime4K GLSL shader files
-└── docker/                        # Offline pre-processing pipeline
-    ├── Dockerfile.processor       # CUDA 12.2 + FFmpeg + libplacebo
-    ├── docker-compose.yml         # GPU orchestration
-    └── scripts/process.sh         # FFmpeg upscaling entrypoint
+    ├── src/                       # SvelteKit frontend
+    │   ├── routes/                # Pages: /, /local, /history, /player, /queue, /settings
+    │   └── lib/
+    │       ├── components/        # Player, PlayerControls, FileBrowser, LocalFileBrowser, AuthForm
+    │       ├── stores/            # Svelte writable stores (player, mega, theme, settings)
+    │       ├── services/          # Tauri invoke wrappers (player, mega, local, db)
+    │       ├── types/             # Shared TypeScript types
+    │       ├── utils/             # Pure helpers (media types, path handling, track labels)
+    │       └── i18n/              # Translations (en, es)
+    ├── src-tauri/                 # Rust backend
+    │   ├── src/commands/          # Tauri commands (mega, local, library, player)
+    │   ├── src/mega/              # MEGAcmd process management & WebDAV
+    │   ├── src/db/                # SQLite migrations
+    │   └── lib/                   # Native libraries (libmpv wrappers)
+    └── static/shaders/            # Anime4K GLSL shader files
 ```
 
 ## App Pages
 
 | Page | Route | Description |
 |------|-------|-------------|
-| **Library** | `/` | Saved and recently watched media |
-| **History** | `/history` | Watch history and favorites (with tabs) |
-| **Browse** | `/browse` | Mega.io cloud file browser with login |
+| **Browse Mega** | `/` | Mega.io cloud file browser, with login and recursive search |
+| **Local Files** | `/local` | Your drives and saved folders. Available without MEGAcmd |
+| **History** | `/history` | Watch history and favorites (with tabs), for both sources |
 | **Player** | `/player` | Embedded video playback with controls |
-| **Queue** | `/queue` | Anime4K pre-processing job queue |
-| **Settings** | `/settings` | Theme, language, Mega status, shader defaults |
+| **Queue** | `/queue` | Playback queue for the chapters/episodes lined up |
+| **Settings** | `/settings` | Theme, language, Mega status, shader defaults, track languages |
 
 ## Keyboard Shortcuts
 
@@ -192,6 +189,8 @@ dnjplayer/
 | `Escape` | Exit fullscreen |
 | `N` | Next in playlist |
 | `P` | Previous in playlist |
+| `A` | Next audio track |
+| `S` | Next subtitle track (cycles through "off") |
 | `1` / `2` | Contrast down / up |
 | `3` / `4` | Brightness up / down |
 | `7` / `8` | Saturation down / up |
@@ -214,11 +213,28 @@ Each mode has quality variants: **S** (fast) → **M** → **L** → **VL** → 
 
 ## How It Works
 
+There are two sources, and they behave the same once playback starts.
+
+**From Mega.io:**
+
 1. **Login** — Authenticate with your Mega.io account from the Browse page
 2. **Browse** — Navigate your cloud drive or shared folders to find a video
 3. **Play** — Selecting a video starts MEGAcmd's WebDAV server and opens the HTTP stream in the embedded mpv player
-4. **Upscale** — Anime4K shaders run in real-time on the GPU during playback (configurable in Settings)
-5. **Adjust** — Tune brightness, contrast, saturation and playback speed from the controls bar
+
+**From your own drives:**
+
+1. **Add a folder** — Pick it once from *Local Files*; it is saved and reusable across sessions
+2. **Browse** — Navigate your saved folders, drives and volumes. Only playable files are listed
+3. **Play** — mpv opens the file directly, so there is no streaming step
+
+Then, for either source:
+
+- **Pick tracks** — Choose the audio and subtitle track from the player, or set a preferred language in Settings and let it apply itself. External subtitle files can be loaded too, and for local files a matching subtitle sitting next to the video is picked up automatically
+- **Upscale** — Anime4K shaders run in real-time on the GPU during playback (configurable in Settings)
+- **Adjust** — Tune brightness, contrast, saturation and playback speed from the controls bar
+
+> Switching tracks on a Mega stream pauses for a second or two while mpv re-buffers
+> the new track over HTTP, then resumes on its own. Local files switch instantly.
 
 ### Architecture
 

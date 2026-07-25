@@ -2,6 +2,7 @@ export const en: Record<string, string> = {
 	// Navigation
 	'nav.history': 'History',
 	'nav.browse': 'Browse Mega',
+	'nav.local': 'Local Files',
 	'nav.player': 'Player',
 	'nav.queue': 'Queue',
 	'nav.settings': 'Settings',
@@ -49,6 +50,18 @@ export const en: Record<string, string> = {
 	'browser.loadingPlayer': 'Starting player...',
 	'browser.loadingFile': 'Loading file...',
 
+	// Local files browser
+	'local.title': 'Local Files',
+	'local.addFolder': 'Add folder…',
+	'local.removeFolder': 'Remove folder',
+	'local.savedFolders': 'Saved folders',
+	'local.noFolders': 'No saved folders yet. Add one to start browsing your videos.',
+	'local.roots': 'Drives and volumes',
+	'local.searchPlaceholder': 'Search this folder…',
+	'local.noVideos': 'No videos found in this folder.',
+	'local.folderUnavailable': 'Folder unavailable. The drive may be disconnected.',
+	'local.loadingFolder': 'Loading folder…',
+
 	// Player
 	'player.placeholder': 'Select a video from Browse to start playing',
 	'player.rewind': 'Rewind 10s',
@@ -67,6 +80,13 @@ export const en: Record<string, string> = {
 	'player.reset': 'Reset',
 	'player.next': 'Next (N)',
 	'player.prev': 'Previous (P)',
+	'player.tracks': 'Tracks (A: audio, S: subtitles)',
+	'player.audioTrack': 'Audio track',
+	'player.subtitleTrack': 'Subtitle track',
+	'player.subtitlesOff': 'Off',
+	'player.loadSubtitles': 'Load subtitle file…',
+	'player.trackUnnamed': 'Track {n}',
+	'player.noTracks': 'No alternative tracks available',
 
 	// Queue page
 	'queue.title': 'Queue',
@@ -102,6 +122,10 @@ export const en: Record<string, string> = {
 	'settings.variantL': 'Large',
 	'settings.variantM': 'Medium (balanced)',
 	'settings.variantS': 'Small (performance)',
+	'settings.subtitles': 'Audio and subtitles',
+	'settings.preferredAudioLang': 'Preferred audio language',
+	'settings.preferredSubtitleLang': 'Preferred subtitle language',
+	'settings.langAuto': 'Automatic',
 
 	// Player settings
 	'settings.player': 'Player',

@@ -9,7 +9,7 @@
 	import { t } from '$lib/i18n';
 	import { checkForUpdates } from '$lib/services/update-service';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
-	import { Clock, CloudDownload, Zap, Settings, Play, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-svelte';
+	import { Clock, CloudDownload, HardDrive, Zap, Settings, Play, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-svelte';
 
 	let { children } = $props();
 	let collapsed = $state(false);
@@ -45,6 +45,7 @@
 
 	const navItems = [
 		{ href: '/', labelKey: 'nav.browse', icon: CloudDownload },
+		{ href: '/local', labelKey: 'nav.local', icon: HardDrive },
 		{ href: '/history', labelKey: 'nav.history', icon: Clock },
 		{ href: '/player', labelKey: 'nav.player', icon: Play },
 		{ href: '/queue', labelKey: 'nav.queue', icon: Zap },

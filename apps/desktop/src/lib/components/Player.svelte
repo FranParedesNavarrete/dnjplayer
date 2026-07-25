@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { resizeMpvOverlay, hideMpvOverlay, showMpvOverlay, exitFullscreen } from '$lib/services/player-service';
-	import { playerActive, playerFullscreen } from '$lib/stores/player-ui';
+	import { playerActive, playerFullscreen, controlsPinned } from '$lib/stores/player-ui';
 	import { osdMessage } from '$lib/stores/player';
 	import { controlsHideDelay } from '$lib/stores/settings';
 	import PlayerControls from './PlayerControls.svelte';
@@ -34,6 +34,9 @@
 			clearTimeout(controlsTimer);
 			controlsTimer = null;
 		}
+		// An expanded inline panel (tracks / adjustments) pins the bar open —
+		// collapsing it mid-interaction would yank the panel away.
+		if (get(controlsPinned)) return;
 		const delay = get(controlsHideDelay);
 		// delay === 0 means "never hide"
 		if (delay <= 0) return;
@@ -186,6 +189,21 @@
 		hideMpvOverlay();
 	});
 
+	// Keep the bar open while a panel pins it, and re-arm the inactivity timer as
+	// soon as it gets unpinned (otherwise nothing would reschedule until the next
+	// cursor movement).
+	$effect(() => {
+		if ($controlsPinned) {
+			controlsVisible = true;
+			if (controlsTimer) {
+				clearTimeout(controlsTimer);
+				controlsTimer = null;
+			}
+		} else if ($playerActive) {
+			scheduleHideControls();
+		}
+	});
+
 	// Reset timer when playback state or hide-delay setting changes
 	$effect(() => {
 		const _active = $playerActive;
@@ -260,7 +278,9 @@
 	.controls-wrapper {
 		overflow: hidden;
 		transition: max-height 0.25s ease, opacity 0.2s ease;
-		max-height: 300px;
+		/* Cap must clear the tallest expanded inline panel (tracks / adjustments),
+		   otherwise the panel gets clipped. The panels scroll internally too. */
+		max-height: 420px;
 		opacity: 1;
 		min-height: 0;
 	}

@@ -1,4 +1,5 @@
 import { writable, derived } from 'svelte/store';
+import type { MediaTrack } from '$lib/types/player';
 
 // mpv playback state
 export const isPaused = writable(true);
@@ -9,6 +10,16 @@ export const videoWidth = writable<number | null>(null);
 export const videoHeight = writable<number | null>(null);
 export const volume = writable(100);
 export const speed = writable(1.0);
+
+// Track state — a mirror of mpv's `track-list` / `aid` / `sid`, refreshed on
+// every file load. Written only by player-service.ts; the UI reads and calls
+// setAudioTrack()/setSubtitleTrack() to change the selection.
+export const audioTracks = writable<MediaTrack[]>([]);
+export const subtitleTracks = writable<MediaTrack[]>([]);
+// Currently selected track ids. `'no'` means the stream is disabled (mpv
+// reports the literal string "no"), `null` means unknown/not loaded yet.
+export const currentAid = writable<number | 'no' | null>(null);
+export const currentSid = writable<number | 'no' | null>(null);
 
 // Video adjustments
 export const brightness = writable(0);

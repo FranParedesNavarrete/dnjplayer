@@ -95,3 +95,43 @@ function createControlsHideDelayStore() {
 }
 
 export const controlsHideDelay = createControlsHideDelayStore();
+
+// Preferred audio / subtitle track languages (persisted to localStorage).
+// Values are ISO 639-2/B codes as used by Matroska and mpv's `alang`/`slang`.
+// 'auto' means "don't pass the option at all" — mpv keeps its own heuristics.
+export const TRACK_LANG_OPTIONS = [
+	'auto',
+	'jpn',
+	'eng',
+	'spa',
+	'cat',
+	'fre',
+	'ger',
+	'ita',
+	'por',
+	'kor',
+	'chi',
+] as const;
+export type TrackLang = (typeof TRACK_LANG_OPTIONS)[number];
+
+function createTrackLangStore(storageKey: string, fallback: TrackLang) {
+	const stored = browser ? localStorage.getItem(storageKey) : null;
+	const initial: TrackLang = stored && (TRACK_LANG_OPTIONS as readonly string[]).includes(stored)
+		? (stored as TrackLang)
+		: fallback;
+
+	const { subscribe, set } = writable<TrackLang>(initial);
+
+	return {
+		subscribe,
+		set(value: TrackLang) {
+			set(value);
+			if (browser) {
+				localStorage.setItem(storageKey, value);
+			}
+		},
+	};
+}
+
+export const preferredAudioLang = createTrackLangStore('dnjplayer-alang', 'auto');
+export const preferredSubtitleLang = createTrackLangStore('dnjplayer-slang', 'auto');

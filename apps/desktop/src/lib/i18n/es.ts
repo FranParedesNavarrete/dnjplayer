@@ -2,6 +2,7 @@ export const es: Record<string, string> = {
 	// Navegacion
 	'nav.history': 'Historial',
 	'nav.browse': 'Explorar Mega',
+	'nav.local': 'Archivos locales',
 	'nav.player': 'Reproductor',
 	'nav.queue': 'Cola',
 	'nav.settings': 'Ajustes',
@@ -49,6 +50,18 @@ export const es: Record<string, string> = {
 	'browser.loadingPlayer': 'Iniciando reproductor...',
 	'browser.loadingFile': 'Cargando archivo...',
 
+	// Explorador de archivos locales
+	'local.title': 'Archivos locales',
+	'local.addFolder': 'Añadir carpeta…',
+	'local.removeFolder': 'Quitar carpeta',
+	'local.savedFolders': 'Carpetas guardadas',
+	'local.noFolders': 'Aún no has guardado ninguna carpeta. Añade una para empezar a ver tus vídeos.',
+	'local.roots': 'Unidades y volúmenes',
+	'local.searchPlaceholder': 'Buscar en esta carpeta…',
+	'local.noVideos': 'No se encontraron vídeos en esta carpeta.',
+	'local.folderUnavailable': 'Carpeta no disponible. Puede que la unidad esté desconectada.',
+	'local.loadingFolder': 'Cargando carpeta…',
+
 	// Reproductor
 	'player.placeholder': 'Selecciona un video desde Explorar para empezar a reproducir',
 	'player.rewind': 'Retroceder 10s',
@@ -67,6 +80,13 @@ export const es: Record<string, string> = {
 	'player.reset': 'Restablecer',
 	'player.next': 'Siguiente (N)',
 	'player.prev': 'Anterior (P)',
+	'player.tracks': 'Pistas (A: audio, S: subtítulos)',
+	'player.audioTrack': 'Pista de audio',
+	'player.subtitleTrack': 'Pista de subtítulos',
+	'player.subtitlesOff': 'Desactivados',
+	'player.loadSubtitles': 'Cargar subtítulos…',
+	'player.trackUnnamed': 'Pista {n}',
+	'player.noTracks': 'No hay pistas alternativas',
 
 	// Pagina Cola
 	'queue.title': 'Cola',
@@ -102,6 +122,10 @@ export const es: Record<string, string> = {
 	'settings.variantL': 'Grande',
 	'settings.variantM': 'Medio (equilibrado)',
 	'settings.variantS': 'Pequeno (rendimiento)',
+	'settings.subtitles': 'Audio y subtítulos',
+	'settings.preferredAudioLang': 'Idioma de audio preferido',
+	'settings.preferredSubtitleLang': 'Idioma de subtítulos preferido',
+	'settings.langAuto': 'Automático',
 
 	// Ajustes del reproductor
 	'settings.player': 'Reproductor',

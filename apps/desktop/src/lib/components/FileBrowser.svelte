@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import { megaListFiles, megaListShares, megaSearch } from '$lib/services/mega-service';
 	import {
-		getCachedWebdavUrl,
+		resolvePlayableUrl,
 		prefetchAround,
 		clearPrefetchCache
 	} from '$lib/services/prefetch-service';
@@ -15,15 +15,14 @@
 	import type { MegaEntry } from '$lib/types/mega';
 	import type { MegaShare } from '$lib/types/mega';
 	import type { PlaylistItem } from '$lib/types/player';
-	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, HardDrive, Users, Check, Square, CheckSquare, Play, Loader2, Heart, X } from 'lucide-svelte';
+	import { Folder, Film, Music, Image, FileText, File, ArrowUp, Search, Cloud, Users, Check, Square, CheckSquare, Play, Loader2, Heart, X } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
-
-	const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.webm', '.mov', '.flv', '.wmv', '.m4v', '.ts'];
+	import { isVideo, isAudio, isImage, isSubtitle } from '$lib/utils/media-types';
 
 	type SectionId = 'cloud' | 'shared';
 
-	const SECTIONS: { id: SectionId; labelKey: string; icon: typeof HardDrive }[] = [
-		{ id: 'cloud', labelKey: 'browser.cloudDrive', icon: HardDrive },
+	const SECTIONS: { id: SectionId; labelKey: string; icon: typeof Cloud }[] = [
+		{ id: 'cloud', labelKey: 'browser.cloudDrive', icon: Cloud },
 		{ id: 'shared', labelKey: 'browser.sharedItems', icon: Users },
 	];
 
@@ -219,23 +218,6 @@
 		}
 	}
 
-	function isVideo(name: string): boolean {
-		const lower = name.toLowerCase();
-		return VIDEO_EXTENSIONS.some((ext) => lower.endsWith(ext));
-	}
-
-	function isAudio(name: string): boolean {
-		return /\.(mp3|flac|ogg|wav|aac|m4a)$/i.test(name);
-	}
-
-	function isImage(name: string): boolean {
-		return /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(name);
-	}
-
-	function isSubtitle(name: string): boolean {
-		return /\.(srt|ass|ssa|vtt|sub)$/i.test(name);
-	}
-
 	function toggleSelection(entry: MegaEntry) {
 		const entryType = entry.entry_type === 'folder' ? 'folder' : 'file';
 		if (selectionType !== null && selectionType !== entryType) return;
@@ -259,12 +241,13 @@
 		loadingPlay = entry.name;
 		try {
 			clearPrefetchCache();
-			playlist.set([{ megaPath: entry.path, name: entry.name }]);
+			const item: PlaylistItem = { source: 'mega', path: entry.path, name: entry.name };
+			playlist.set([item]);
 			playlistIndex.set(0);
 
 			loadingStep = $t['browser.loadingWebdav'];
 			log.info('[FileBrowser] Getting WebDAV URL for:', entry.path);
-			const url = await getCachedWebdavUrl(entry.path);
+			const url = await resolvePlayableUrl(item);
 			log.info('[FileBrowser] Got WebDAV URL:', url);
 
 			loadingStep = $t['browser.loadingPlayer'];
@@ -298,7 +281,11 @@
 				const selectedFiles = files
 					.filter((f) => selectedPaths.has(f.path) && isVideo(f.name))
 					.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-				playlistItems = selectedFiles.map((f) => ({ megaPath: f.path, name: f.name }));
+				playlistItems = selectedFiles.map((f) => ({
+					source: 'mega' as const,
+					path: f.path,
+					name: f.name
+				}));
 			} else if (selectionType === 'folder') {
 				const selectedFolders = folders
 					.filter((f) => selectedPaths.has(f.path))
@@ -310,7 +297,13 @@
 						const videoFiles = folderEntries
 							.filter((e) => e.entry_type === 'file' && isVideo(e.name))
 							.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-						playlistItems.push(...videoFiles.map((f) => ({ megaPath: f.path, name: f.name })));
+						playlistItems.push(
+							...videoFiles.map((f) => ({
+								source: 'mega' as const,
+								path: f.path,
+								name: f.name
+							}))
+						);
 					} catch (e) {
 						log.warn('[FileBrowser] Failed to load folder:', folder.path, e);
 					}
@@ -327,11 +320,11 @@
 			playlistIndex.set(0);
 
 			const firstItem = playlistItems[0];
-			const url = await getCachedWebdavUrl(firstItem.megaPath);
+			const url = await resolvePlayableUrl(firstItem);
 			await loadVideo(url, firstItem.name);
 			prefetchAround(0);
-			markWatched(firstItem.megaPath, firstItem.name).then(() => {
-				watchedPaths = new Set([...watchedPaths, firstItem.megaPath]);
+			markWatched(firstItem.path, firstItem.name).then(() => {
+				watchedPaths = new Set([...watchedPaths, firstItem.path]);
 			}).catch((e) => log.warn('[FileBrowser] Failed to mark watched:', e));
 
 			log.info('[FileBrowser] Playlist loaded with', playlistItems.length, 'items');

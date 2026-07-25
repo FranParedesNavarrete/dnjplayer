@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Cloud, Sparkles, Sun, Moon, Palette, Link, Play, RefreshCw } from 'lucide-svelte';
+	import { Cloud, Sparkles, Sun, Moon, Palette, Link, Play, Languages, RefreshCw } from 'lucide-svelte';
 	import { getVersion } from '@tauri-apps/api/app';
 	import { theme } from '$lib/stores/theme';
 	import { updatePhase, updateError } from '$lib/stores/update';
@@ -10,11 +10,16 @@
 		defaultShaderMode,
 		defaultShaderVariant,
 		controlsHideDelay,
+		preferredAudioLang,
+		preferredSubtitleLang,
+		TRACK_LANG_OPTIONS,
 		type ControlsHideDelay,
+		type TrackLang,
 	} from '$lib/stores/settings';
 	import { isConnected, userEmail } from '$lib/stores/mega';
 	import { megaCheckStatus } from '$lib/services/mega-service';
 	import { t } from '$lib/i18n';
+	import { languageName } from '$lib/utils/track-labels';
 	import type { ShaderMode, ShaderVariant } from '$lib/types/player';
 
 	let appVersion = $state('');
@@ -47,6 +52,23 @@
 	function handleControlsHideDelayChange(e: Event) {
 		const target = e.target as HTMLSelectElement;
 		controlsHideDelay.set(parseInt(target.value, 10) as ControlsHideDelay);
+	}
+
+	function handlePreferredAudioLangChange(e: Event) {
+		const target = e.target as HTMLSelectElement;
+		preferredAudioLang.set(target.value as TrackLang);
+	}
+
+	function handlePreferredSubtitleLangChange(e: Event) {
+		const target = e.target as HTMLSelectElement;
+		preferredSubtitleLang.set(target.value as TrackLang);
+	}
+
+	// 'auto' is the only non-language option; the rest are ISO 639-2 codes shown
+	// with their name in the current app language.
+	function langLabel(code: TrackLang): string {
+		if (code === 'auto') return $t['settings.langAuto'];
+		return languageName(code, $language) ?? code.toUpperCase();
 	}
 </script>
 
@@ -166,6 +188,29 @@
 					<option value="15000">{$t['settings.delay15']}</option>
 					<option value="30000">{$t['settings.delay30']}</option>
 					<option value="60000">{$t['settings.delay60']}</option>
+				</select>
+			</div>
+		</section>
+
+		<section class="settings-section">
+			<div class="section-title">
+				<Languages size={18} strokeWidth={1.8} />
+				<h3>{$t['settings.subtitles']}</h3>
+			</div>
+			<div class="setting-row">
+				<span class="setting-label">{$t['settings.preferredAudioLang']}</span>
+				<select class="setting-select" value={$preferredAudioLang} onchange={handlePreferredAudioLangChange}>
+					{#each TRACK_LANG_OPTIONS as code (code)}
+						<option value={code}>{langLabel(code)}</option>
+					{/each}
+				</select>
+			</div>
+			<div class="setting-row">
+				<span class="setting-label">{$t['settings.preferredSubtitleLang']}</span>
+				<select class="setting-select" value={$preferredSubtitleLang} onchange={handlePreferredSubtitleLangChange}>
+					{#each TRACK_LANG_OPTIONS as code (code)}
+						<option value={code}>{langLabel(code)}</option>
+					{/each}
 				</select>
 			</div>
 		</section>
