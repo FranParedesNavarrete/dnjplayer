@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import {
 		isPaused,
 		currentTime,
@@ -9,10 +10,20 @@
 		filename,
 		brightness,
 		contrast,
-		saturation
+		saturation,
+		audioTracks,
+		subtitleTracks,
+		currentAid,
+		currentSid
 	} from '$lib/stores/player';
-	import { currentVideoTitle, playlist, playlistIndex, playerFullscreen } from '$lib/stores/player-ui';
-	import { defaultShaderMode, defaultShaderVariant } from '$lib/stores/settings';
+	import {
+		currentVideoTitle,
+		playlist,
+		playlistIndex,
+		playerFullscreen,
+		controlsPinned
+	} from '$lib/stores/player-ui';
+	import { defaultShaderMode, defaultShaderVariant, language } from '$lib/stores/settings';
 	import {
 		togglePause,
 		seek,
@@ -27,8 +38,14 @@
 		loadShaderPreset,
 		playNext,
 		playPrev,
-		checkAutoAdvance
+		checkAutoAdvance,
+		setAudioTrack,
+		setSubtitleTrack,
+		cycleAudioTrack,
+		cycleSubtitleTrack,
+		addExternalSubtitle
 	} from '$lib/services/player-service';
+	import { localPickSubtitle } from '$lib/services/local-service';
 	import { get } from 'svelte/store';
 	import {
 		Play,
@@ -41,10 +58,14 @@
 		Maximize,
 		Minimize,
 		SlidersHorizontal,
+		// Canonical name in lucide-svelte 0.577; `Subtitles` is only a deprecated
+		// alias for this same icon and could be dropped in a future major.
+		Captions,
 		ChevronUp,
 		ChevronDown
 	} from 'lucide-svelte';
 	import { t } from '$lib/i18n';
+	import { trackLabel } from '$lib/utils/track-labels';
 	import type { ShaderMode } from '$lib/types/player';
 
 	let hasPrev = $derived($playlistIndex > 0);
@@ -58,6 +79,33 @@
 	let isMuted = $state(false);
 	let isFs = $derived($playerFullscreen);
 	let showAdjustments = $state(false);
+	let showTracks = $state(false);
+
+	// The toggle is only worth showing when there is an actual choice to make:
+	// more than one audio track, or at least one subtitle track.
+	let hasTrackChoices = $derived($audioTracks.length > 1 || $subtitleTracks.length > 0);
+
+	// mpv's aid/sid can be null (unknown / mpv decides), so fall back to whichever
+	// track mpv reported as selected. Values are strings to match <option value>.
+	let audioValue = $derived(
+		$currentAid != null
+			? String($currentAid)
+			: String($audioTracks.find((track) => track.selected)?.id ?? '')
+	);
+	let subtitleValue = $derived(
+		$currentSid != null
+			? String($currentSid)
+			: String($subtitleTracks.find((track) => track.selected)?.id ?? 'no')
+	);
+
+	// Keep the controls bar from auto-hiding while either inline panel is open.
+	// mpv swallows mouse events over the video, so without this a user reading the
+	// panel gets it collapsed out from under them after the inactivity delay.
+	$effect(() => {
+		controlsPinned.set(showTracks || showAdjustments);
+	});
+
+	onDestroy(() => controlsPinned.set(false));
 
 	function formatTime(seconds: number | null): string {
 		if (seconds == null || isNaN(seconds)) return '--:--';
@@ -101,6 +149,21 @@
 
 	async function handleFullscreen() {
 		await toggleFullscreen();
+	}
+
+	function handleAudioTrackChange(e: Event) {
+		const value = (e.target as HTMLSelectElement).value;
+		setAudioTrack(value === 'no' ? 'no' : parseInt(value, 10));
+	}
+
+	function handleSubtitleTrackChange(e: Event) {
+		const value = (e.target as HTMLSelectElement).value;
+		setSubtitleTrack(value === 'no' ? 'no' : parseInt(value, 10));
+	}
+
+	async function handleLoadSubtitle() {
+		const path = await localPickSubtitle();
+		if (path) await addExternalSubtitle(path);
 	}
 
 	async function switchShaderMode(mode: ShaderMode) {
@@ -152,6 +215,16 @@
 				break;
 			case 'Escape':
 				if ($playerFullscreen) handleFullscreen();
+				break;
+
+			// Track cycling (both paint their own OSD message)
+			case 'a':
+				cycleAudioTrack();
+				e.preventDefault();
+				break;
+			case 's':
+				cycleSubtitleTrack();
+				e.preventDefault();
 				break;
 
 			// Contrast: 1 / 2
@@ -266,6 +339,47 @@
 		</div>
 	{/if}
 
+	<!-- Inline tracks panel. Same inline approach as the adjustments panel: the
+	     native mpv window is drawn on top of the webview over .video-area, so an
+	     absolutely positioned popover there would simply be invisible. Native
+	     <select> popups are fine — those are OS windows. -->
+	{#if showTracks}
+		<div class="adjustments-inline tracks-inline">
+			{#if $audioTracks.length > 1}
+				<div class="adj-slider-row track-row">
+					<span class="adj-label">{$t['player.audioTrack']}</span>
+					<select class="speed-select track-select" value={audioValue} onchange={handleAudioTrackChange}>
+						{#each $audioTracks as track (track.id)}
+							<option value={String(track.id)}>
+								{trackLabel(track, $language, $t['player.trackUnnamed'])}
+							</option>
+						{/each}
+					</select>
+				</div>
+			{/if}
+
+			{#if $subtitleTracks.length > 0}
+				<div class="adj-slider-row track-row">
+					<span class="adj-label">{$t['player.subtitleTrack']}</span>
+					<select class="speed-select track-select" value={subtitleValue} onchange={handleSubtitleTrackChange}>
+						<option value="no">{$t['player.subtitlesOff']}</option>
+						{#each $subtitleTracks as track (track.id)}
+							<option value={String(track.id)}>
+								{trackLabel(track, $language, $t['player.trackUnnamed'])}
+							</option>
+						{/each}
+					</select>
+				</div>
+			{/if}
+
+			{#if !hasTrackChoices}
+				<span class="adj-label no-tracks">{$t['player.noTracks']}</span>
+			{/if}
+
+			<button class="adj-reset-btn" onclick={handleLoadSubtitle}>{$t['player.loadSubtitles']}</button>
+		</div>
+	{/if}
+
 	<!-- Button row -->
 	<div class="button-row">
 		<div class="left-controls">
@@ -323,6 +437,19 @@
 				value={$volumeStore}
 				oninput={handleVolumeInput}
 			/>
+
+			<!-- Tracks toggle. Also rendered while the panel is open so it can always
+			     be closed, even if the tracks disappear (e.g. playlist advanced). -->
+			{#if hasTrackChoices || showTracks}
+				<button class="ctrl-btn" onclick={() => showTracks = !showTracks} title={$t['player.tracks']}>
+					<Captions size={18} strokeWidth={2} />
+					{#if showTracks}
+						<ChevronDown size={12} strokeWidth={2} />
+					{:else}
+						<ChevronUp size={12} strokeWidth={2} />
+					{/if}
+				</button>
+			{/if}
 
 			<!-- Video Adjustments toggle -->
 			<button class="ctrl-btn" onclick={() => showAdjustments = !showAdjustments} title={$t['player.adjustments']}>
@@ -479,6 +606,30 @@
 	.adj-reset-btn:hover {
 		background: var(--border);
 		color: var(--text-primary);
+	}
+
+	/* Tracks panel — reuses .adjustments-inline, but track names can be long so
+	   it needs to scroll instead of pushing past the controls-wrapper cap. */
+	.tracks-inline {
+		max-height: 140px;
+		overflow-y: auto;
+	}
+
+	.track-row {
+		min-width: 240px;
+	}
+
+	/* .speed-select is capped at 100px, far too narrow for track names. */
+	.track-select {
+		flex: 1;
+		min-width: 0;
+		max-width: none;
+		text-overflow: ellipsis;
+	}
+
+	.no-tracks {
+		color: var(--text-muted);
+		font-style: italic;
 	}
 
 	/* Button row */
