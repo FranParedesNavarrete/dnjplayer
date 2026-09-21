@@ -28,7 +28,15 @@ import {
 	audioTracks,
 	subtitleTracks,
 	currentAid,
-	currentSid
+	currentSid,
+	isMuted,
+	mediaTitle,
+	isBuffering,
+	coreIdle,
+	isSeeking,
+	eofReached,
+	demuxerCacheTime,
+	demuxerCacheDuration
 } from '$lib/stores/player';
 import { get } from 'svelte/store';
 import {
@@ -44,8 +52,20 @@ import {
 import { notify } from '$lib/stores/notifications';
 import { t } from '$lib/i18n';
 import type { VideoAdjustments, ShaderMode, ShaderVariant, MediaTrack } from '$lib/types/player';
-import { markWatched, toDbKey } from '$lib/services/db-service';
-import { resolvePlayableUrl, prefetchAround } from '$lib/services/prefetch-service';
+import {
+	markWatched,
+	toDbKey,
+	savePlaybackPosition,
+	getPlaybackPosition,
+	clearPlaybackPosition
+} from '$lib/services/db-service';
+import { resolvePlayableUrl, prefetchAround, invalidate } from '$lib/services/prefetch-service';
+import {
+	shouldStorePosition,
+	isEffectivelyWatched,
+	resumePositionFor
+} from '$lib/utils/resume';
+import { isRemoteUrl, streamProfileFor } from '$lib/utils/stream-profile';
 import {
 	defaultShaderMode,
 	defaultShaderVariant,
@@ -76,10 +96,69 @@ const OBSERVED_PROPERTIES = [
 	// which would come back as garbage/null under a numeric format.
 	['aid', 'string', 'none'],
 	['sid', 'string', 'none'],
+	// Buffering / stall state. Every one of these is a SCALAR format on purpose:
+	// 'node' is only safe on the observed path, and none of these needs it. They
+	// are what lets the UI tell "the user paused" apart from "the WebDAV stream
+	// stalled" — see stores/player.ts and utils/buffering.ts.
+	['paused-for-cache', 'flag', 'none'],
+	['core-idle', 'flag', 'none'],
+	['seeking', 'flag', 'none'],
+	['demuxer-cache-time', 'double', 'none'],
+	['demuxer-cache-duration', 'double', 'none'],
+	// Mute was never observed, so mpv's own mute state (OSD keybind, another
+	// controller) and the UI could disagree.
+	['mute', 'flag'],
+	['media-title', 'string', 'none'],
 ] as const satisfies MpvObservableProperty[];
 
 const isMacOS = navigator.platform?.toLowerCase().includes('mac') ?? false;
 const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
+
+/**
+ * Render profile — options that shape image quality and output timing.
+ *
+ * These are init-time options: the VO cannot be swapped on a live instance, and
+ * the rest have no reason to change per file.
+ *
+ * Measured against the mpv this app links (v0.41.0 / libmpv 2.5.0, Homebrew),
+ * whose `--list-options` defaults are quoted below. Anything already at the
+ * value we want is NOT repeated here (e.g. `dither-depth` already defaults to
+ * `auto`); a config line that changes nothing is a line that misleads the next
+ * reader.
+ *
+ * - `vo=gpu-next` (default: unset -> `gpu`). libplacebo-based renderer. It is
+ *   mpv's recommended output, has the better scaler/deband/tone-map paths, and
+ *   on this build the available VOs are exactly gpu-next/gpu/libmpv with `macvk`
+ *   (Vulkan-on-Metal) as the only context — so both `gpu` and `gpu-next` go
+ *   through Vulkan anyway and there is nothing to lose. It keeps creating its
+ *   own NSWindow, which is what the macOS child-window embedding needs.
+ * - `scale=spline36` / `cscale=spline36` (defaults: `lanczos` / follows scale).
+ *   Sharper than lanczos without its ringing on line art. This runs AFTER the
+ *   Anime4K chain: Anime4K does the 2x CNN upscale, mpv only resamples the
+ *   result to the window size, so the two do not fight.
+ * - `deband=yes` (default: `no`). Flat gradients (skies, fades) are where anime
+ *   sources band, and a CNN upscaler amplifies it into visible contours. Cheap
+ *   next to the Anime4K passes.
+ * - `video-sync=display-resample` (default: `audio`). Removes the periodic
+ *   judder of 23.976 fps content on a 60 Hz panel by resampling audio to the
+ *   real display clock instead of dropping/duplicating frames.
+ * - `volume-max=150` (default: `130`). The volume slider in the UI goes to 150,
+ *   so today its top 13% silently does nothing. This makes the slider honest.
+ *   mpv accepts 100..1000; 150 matches the UI exactly rather than inventing
+ *   headroom the user cannot reach.
+ *
+ * NOT set, deliberately: `gpu-context` (only `macvk` exists on this build, mpv
+ * picks it), `gpu-api`, `target-colorspace-hint` (HDR passthrough is its own
+ * project), `dither-depth` (already `auto`).
+ */
+const RENDER_OPTIONS = {
+	'vo': 'gpu-next',
+	'scale': 'spline36',
+	'cscale': 'spline36',
+	'deband': 'yes',
+	'video-sync': 'display-resample',
+	'volume-max': 150,
+} as const;
 
 /**
  * Build the mpv init config. This is a function (not a const) so the persisted
@@ -91,6 +170,7 @@ function buildMpvConfig(mpvLogFile: string | null): MpvConfig {
 	const slang = get(preferredSubtitleLang);
 	return {
 		initialOptions: {
+			...RENDER_OPTIONS,
 			'hwdec': 'auto-safe',
 			'keep-open': 'yes',
 			'osc': 'no',
@@ -119,6 +199,23 @@ function buildMpvConfig(mpvLogFile: string | null): MpvConfig {
 		},
 		observedProperties: OBSERVED_PROPERTIES,
 	};
+}
+
+/**
+ * Write the demuxer/network profile matching `url` (see utils/stream-profile.ts
+ * for the values and the reasoning). Per-option failures are logged, not fatal:
+ * a cache option mpv doesn't recognise must not stop the file from playing.
+ */
+async function applyStreamProfile(url: string): Promise<void> {
+	const remote = isRemoteUrl(url);
+	for (const [name, value] of Object.entries(streamProfileFor(url))) {
+		try {
+			await setProperty(name, value);
+		} catch (e) {
+			log.warn(`[player] Could not set ${name}=${value}:`, e);
+		}
+	}
+	log.debug(`[player] Applied the ${remote ? 'remote stream' : 'local file'} profile`);
 }
 
 /** Dev-only path for mpv's `log-file` (inside the app log dir). */
@@ -150,6 +247,126 @@ let initPromise: Promise<void> | null = null;
 // for the previous file can't overwrite the current file's tracks.
 let loadGeneration = 0;
 // Watchdog timer id, so it can be cancelled on teardown or on the next file.
+
+// --- Resume position ---------------------------------------------------------
+//
+// mpv is the only place the live position exists, and SQLite is the only place
+// it survives; this section is the bridge. Everything about *which* positions
+// are worth keeping lives in utils/resume.ts, which is pure and unit tested.
+//
+// Sampling policy: every 60 s while a file is loaded, plus on every pause, on
+// stop/unload, on EOF, and before loading the next file. The periodic tick is
+// what covers the case the other hooks cannot — the app being killed, losing
+// power, or crashing — so at worst a minute of progress is lost.
+//
+// Resume is SILENT (no "continue watching?" prompt), like Nuvio. A prompt would
+// have to be answered before every single episode of a queue, it cannot be
+// rendered over the video on Windows yet (CLAUDE.md #2), and the 1s/90% window
+// already excludes the two cases where a silent jump would surprise anyone
+// ("I barely started" and "I finished it"). The seek is also visible and
+// undoable: the position is on the timeline and a single seek-to-0 undoes it.
+
+const POSITION_SAVE_INTERVAL_MS = 60_000;
+
+/** DB row key + display name of the item currently loaded, or null. */
+let currentResumeTarget: { key: string; name: string } | null = null;
+let positionTimer: ReturnType<typeof setInterval> | null = null;
+let unsubscribePause: (() => void) | null = null;
+
+/**
+ * The playlist entry the player is currently on, as a DB row key.
+ *
+ * INVARIANT: every caller of loadVideo() sets `playlist` + `playlistIndex`
+ * before calling it (FileBrowser, LocalFileBrowser, queue, history, playNext/
+ * playPrev, devSmokePlay). That is what lets this be derived here instead of
+ * threading a key through every call site — loadVideo() only ever receives a
+ * playable URL, which for Mega is an opaque WebDAV token and cannot be turned
+ * back into a row key.
+ *
+ * Returns null if the playlist is empty, and resume is then simply skipped.
+ */
+function currentResumeKey(): { key: string; name: string } | null {
+	const items = get(playlist);
+	const item = items[get(playlistIndex)];
+	if (!item) return null;
+	// toDbKey is mandatory: a bare local path would be read back as a Mega path.
+	return { key: toDbKey(item.source, item.path), name: item.name };
+}
+
+/**
+ * Write the current position for the loaded item, or clear it if the file is
+ * effectively finished.
+ *
+ * Note the third case: a position outside the window that is NOT "finished"
+ * (i.e. under 1 s, or an unknown duration) leaves whatever is stored alone. That
+ * is deliberate — opening a file and immediately closing it must not wipe a
+ * resume point the user still wants.
+ */
+async function persistPlaybackPosition(): Promise<void> {
+	const target = currentResumeTarget;
+	if (!target) return;
+	const position = get(currentTime);
+	const dur = get(duration);
+	try {
+		if (shouldStorePosition(position, dur)) {
+			await savePlaybackPosition(target.key, target.name, position as number, dur);
+		} else if (isEffectivelyWatched(position, dur)) {
+			await clearPlaybackPosition(target.key);
+		}
+	} catch (e) {
+		log.warn('[player] Failed to persist the playback position:', e);
+	}
+}
+
+/**
+ * Stored position for `key`, already validated, or null for "start from the
+ * beginning". Never throws: a database problem must not stop playback.
+ */
+async function readResumePosition(key: string | undefined): Promise<number | null> {
+	if (!key) return null;
+	try {
+		const stored = await getPlaybackPosition(key);
+		if (!stored) return null;
+		const resumeAt = resumePositionFor(stored.positionSeconds, stored.durationSeconds);
+		if (resumeAt != null) log.info(`[player] Resuming at ${Math.round(resumeAt)}s`);
+		return resumeAt;
+	} catch (e) {
+		log.warn('[player] Failed to read the resume position:', e);
+		return null;
+	}
+}
+
+/** (Re)start the periodic save tick. Idempotent. */
+function startPositionTimer(): void {
+	if (positionTimer !== null) return;
+	positionTimer = setInterval(() => {
+		void persistPlaybackPosition();
+	}, POSITION_SAVE_INTERVAL_MS);
+}
+
+function stopPositionTimer(): void {
+	if (positionTimer !== null) {
+		clearInterval(positionTimer);
+		positionTimer = null;
+	}
+}
+
+/**
+ * Save on every pause. Covers the two ways a session normally ends without a
+ * stop: the user pausing, and hideMpvOverlay() pausing on navigation away.
+ * The store's immediate first emission is skipped, as in the language watchers.
+ */
+function attachPauseWatcher(): void {
+	if (unsubscribePause) return;
+	let first = true;
+	unsubscribePause = isPaused.subscribe((paused) => {
+		if (first) {
+			first = false;
+			return;
+		}
+		if (paused) void persistPlaybackPosition();
+	});
+}
 
 /**
  * Initialize mpv player and start observing properties.
@@ -216,11 +433,36 @@ async function doInitPlayer(): Promise<void> {
 				case 'sid':
 					currentSid.set(parseTrackId(data));
 					break;
+				case 'paused-for-cache':
+					isBuffering.set(asFlag(data));
+					break;
+				case 'core-idle':
+					coreIdle.set(asFlag(data));
+					break;
+				case 'seeking':
+					isSeeking.set(asFlag(data));
+					break;
+				case 'demuxer-cache-time':
+					demuxerCacheTime.set(typeof data === 'number' ? data : null);
+					break;
+				case 'demuxer-cache-duration':
+					demuxerCacheDuration.set(typeof data === 'number' ? data : null);
+					break;
+				case 'mute':
+					isMuted.set(asFlag(data));
+					break;
+				case 'media-title':
+					mediaTitle.set(typeof data === 'string' ? data : null);
+					break;
 				case 'eof-reached':
 					// Reliable end-of-file signal (keep-open pauses at EOF). Advance
 					// to the next item, or — if this was the last one — leave
 					// fullscreen so the sidebar/UI is usable again.
+					eofReached.set(asFlag(data));
 					if (data === true || String(data) === 'yes') {
+						// Finished: drop any stored resume point so the next play
+						// starts over instead of jumping to the last minute.
+						void persistPlaybackPosition();
 						const items = get(playlist);
 						const idx = get(playlistIndex);
 						if (idx < items.length - 1) {
@@ -241,6 +483,9 @@ async function doInitPlayer(): Promise<void> {
 	// open/decode this": loadfile itself succeeds because it merely queues the file.
 	unlistenEvents = await listenEvents((event) => {
 		if (event.event === 'file-loaded') {
+			// A file opened: the previous failure (if any) is over, so the
+			// one-retry budget for the next one is restored.
+			retriedItemPath = null;
 			refreshSelectedTracks();
 		} else if (event.event === 'end-file' && event.reason === 'error') {
 			handleLoadError(event);
@@ -248,17 +493,34 @@ async function doInitPlayer(): Promise<void> {
 	});
 
 	attachLanguagePreferenceWatchers();
+	attachPauseWatcher();
 }
 
+/** Remote path of the item we already retried once; cleared on a successful load. */
+let retriedItemPath: string | null = null;
+
 /**
- * mpv gave up on the current file. Surface it to the user (persistent toast, the
- * ToastHost renders it) and leave the player in an observable, idle state.
+ * mpv gave up on the current file.
+ *
+ * For a Mega stream the overwhelmingly likely cause is a dead WebDAV URL:
+ * MEGAcmd restarted and the cached URL still points at the previous server
+ * instance. The generation token in prefetch-service.ts catches that whenever we
+ * sampled the server as down, but a server replaced between two samples slips
+ * through — so the first failure per item buys one silent re-resolve + reload
+ * before the user is told anything. Anything else (bad codec, deleted file, a
+ * second failure) goes straight to the toast.
  */
 function handleLoadError(event: { error?: number; file_error?: string }): void {
 	// `file_error` is mpv's own description when available; the numeric code is
 	// the MPV_ERROR_* value otherwise (e.g. -13 = loading failed).
 	const detail = event.file_error ?? `mpv error ${event.error ?? 'unknown'}`;
 	log.error('[player] end-file with reason=error:', detail, 'url:', get(currentVideoUrl));
+	if (retryWithFreshUrl()) return;
+	reportLoadFailure(detail);
+}
+
+/** Put the player in an observable, idle, failed state and tell the user. */
+function reportLoadFailure(detail: string): void {
 	playbackError.set(detail);
 	playerActive.set(false);
 	if (isMacOS || isWindows) hideMpvOverlay().catch(() => {});
@@ -266,10 +528,49 @@ function handleLoadError(event: { error?: number; file_error?: string }): void {
 }
 
 /**
+ * Re-resolve the current Mega item's WebDAV URL and reload it, once.
+ * Returns true if a retry was started (the caller must then stay quiet).
+ *
+ * The budget is one retry per playlist item, reset by the next successful
+ * `file-loaded`, so a genuinely broken file cannot loop.
+ */
+function retryWithFreshUrl(): boolean {
+	const items = get(playlist);
+	const item = items[get(playlistIndex)];
+	// Local files have no URL to refresh: their path IS the URL.
+	if (!item || item.source !== 'mega') return false;
+	if (retriedItemPath === item.path) return false;
+	retriedItemPath = item.path;
+
+	log.warn('[player] Mega stream failed to open; re-resolving its WebDAV URL and retrying once');
+	invalidate(item.path);
+
+	void (async () => {
+		try {
+			const url = await resolvePlayableUrl(item);
+			await loadVideo(url, item.name);
+			await setProperty('pause', 'no');
+		} catch (e) {
+			log.error('[player] Retry with a fresh WebDAV URL also failed:', e);
+			reportLoadFailure(e instanceof Error ? e.message : String(e));
+		}
+	})();
+	return true;
+}
+
+/**
  * Destroy mpv player and clean up.
  */
 export async function destroyPlayer(): Promise<void> {
 	if (!initialized) return;
+	// Last chance to record where the user was, before mpv stops reporting it.
+	await persistPlaybackPosition();
+	stopPositionTimer();
+	currentResumeTarget = null;
+	if (unsubscribePause) {
+		unsubscribePause();
+		unsubscribePause = null;
+	}
 	if (unlistenProperties) {
 		unlistenProperties();
 		unlistenProperties = null;
@@ -298,6 +599,10 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 		await initPlayer();
 	}
 
+	// Record where the OUTGOING file was before anything about it is reset.
+	// Auto-advance and "play the next episode" both come through here.
+	await persistPlaybackPosition();
+
 	// Invalidate the previous file's tracks straight away. Leaving them in place
 	// would show the old file's audio/subtitle options until mpv reports the new
 	// ones, and picking one would set a track id that belongs to another file.
@@ -306,8 +611,39 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 	subtitleTracks.set([]);
 	currentAid.set(null);
 	currentSid.set(null);
+	// Clearing the position/duration here is not cosmetic: loadVideo() sets
+	// `pause` below, which wakes the pause watcher, which saves the position —
+	// and mpv still reports the PREVIOUS file's time-pos until the new one is
+	// open. Without this, the outgoing file's position gets written under the
+	// incoming file's key. Nulls make every threshold in utils/resume.ts refuse.
+	currentTime.set(null);
+	duration.set(null);
+	// Stale buffering state belongs to the previous file; clearing it stops the
+	// UI from showing the old cache extent against the new file's timeline.
+	eofReached.set(false);
+	isBuffering.set(false);
+	isSeeking.set(false);
+	demuxerCacheTime.set(null);
+	demuxerCacheDuration.set(null);
 
 	playbackError.set(null);
+
+	// Demuxer/cache options must be in place before the demuxer is created.
+	await applyStreamProfile(url);
+
+	// Resume. `start` is applied by mpv while OPENING the file, so playback
+	// begins at the right place; seeking after `file-loaded` would instead cost a
+	// full re-buffer over WebDAV (CLAUDE.md #4) and download the opening bytes
+	// for nothing. It is written on EVERY load, 'none' included, because `start`
+	// is a global option: leaving the previous file's value behind would make the
+	// next one jump too.
+	currentResumeTarget = currentResumeKey();
+	const resumeAt = await readResumePosition(currentResumeTarget?.key);
+	try {
+		await setProperty('start', resumeAt != null ? String(resumeAt) : 'none');
+	} catch (e) {
+		log.warn('[player] Could not set the start position:', e);
+	}
 
 	log.info('[player] Sending loadfile command...');
 	try {
@@ -317,6 +653,7 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 		throw e;
 	}
 	log.info('[player] loadfile command succeeded');
+	startPositionTimer();
 
 	// Start paused so the user decides when to play
 	await setProperty('pause', 'yes');
@@ -442,6 +779,11 @@ export function showMpvOverlay(): void {
  */
 export async function stopVideo(): Promise<void> {
 	if (!initialized) return;
+	// Record the position BEFORE `stop` clears mpv's time-pos, or every stop
+	// would be saved as "position unknown".
+	await persistPlaybackPosition();
+	stopPositionTimer();
+	currentResumeTarget = null;
 	// Leave fullscreen so the user isn't stuck on a chrome-less screen after stop.
 	await exitFullscreen();
 	// Clear flags FIRST so late layout events don't re-show the surface
@@ -462,6 +804,12 @@ export async function stopVideo(): Promise<void> {
 	subtitleTracks.set([]);
 	currentAid.set(null);
 	currentSid.set(null);
+	eofReached.set(false);
+	isBuffering.set(false);
+	isSeeking.set(false);
+	demuxerCacheTime.set(null);
+	demuxerCacheDuration.set(null);
+	mediaTitle.set(null);
 }
 
 // --- Playback controls ---
@@ -511,6 +859,23 @@ export async function setVideoAdjustment(property: string, value: number): Promi
 	if (!initialized) return;
 	await setProperty(property, value);
 	adjustmentStores[property]?.set(value);
+}
+
+/**
+ * Set mpv's subtitle delay, in milliseconds (mpv's own unit is seconds).
+ *
+ * Its own function rather than a `setVideoAdjustment('sub-delay', …)` call: that
+ * one is named for the brightness/contrast/saturation family and mirrors the value
+ * into `adjustmentStores`, so using it here both lies about what is being set and
+ * silently skips the mirror. Positive values delay the subtitles.
+ */
+export async function setSubtitleDelay(milliseconds: number): Promise<void> {
+	if (!initialized) return;
+	try {
+		await setProperty('sub-delay', milliseconds / 1000);
+	} catch (e) {
+		log.warn('[player] Failed to set subtitle delay:', e);
+	}
 }
 
 export async function resetVideoAdjustments(): Promise<void> {

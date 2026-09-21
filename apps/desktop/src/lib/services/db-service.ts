@@ -54,6 +54,89 @@ export async function markWatched(key: string, filename: string): Promise<void> 
 	);
 }
 
+// --- Resume position ---
+//
+// Columns added by migration 006 on `watched_files`, keyed by the same
+// source-namespaced row key as everything else in this file. A row may exist
+// with a NULL position (watched from an older build, or finished), which reads
+// back as "no resume point".
+
+/** A stored resume point. `durationSeconds` is null for rows written without one. */
+export interface ResumePoint {
+	positionSeconds: number;
+	durationSeconds: number | null;
+}
+
+/**
+ * Store (or refresh) the resume point for a file.
+ *
+ * Upserts, so it also works for a file that was never marked watched -- without
+ * touching `play_count`, which belongs to "the user started this", not to "the
+ * user is still at minute 12". `watched_at` IS refreshed: a file you are still
+ * watching is the most recent thing in your history.
+ *
+ * The caller decides whether a position is worth storing; see
+ * {@link import('$lib/utils/resume').shouldStorePosition}. Use
+ * {@link clearPlaybackPosition} for the "finished / start over" case.
+ *
+ * @param key Stored row key (see {@link toDbKey}), not a bare path.
+ */
+export async function savePlaybackPosition(
+	key: string,
+	filename: string,
+	positionSeconds: number,
+	durationSeconds: number | null
+): Promise<void> {
+	const database = await getDb();
+	await database.execute(
+		`INSERT INTO watched_files (mega_path, filename, position_seconds, duration_seconds)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT(mega_path) DO UPDATE SET
+		   position_seconds = excluded.position_seconds,
+		   duration_seconds = excluded.duration_seconds,
+		   watched_at = datetime('now')`,
+		[key, filename, positionSeconds, durationSeconds]
+	);
+}
+
+/**
+ * Read back a resume point, or null when there is no row or the row has no
+ * position. Run the result through
+ * {@link import('$lib/utils/resume').resumePositionFor} before seeking: a stored
+ * position is not automatically a valid one.
+ *
+ * @param key Stored row key (see {@link toDbKey}), not a bare path.
+ */
+export async function getPlaybackPosition(key: string): Promise<ResumePoint | null> {
+	const database = await getDb();
+	const rows: { position_seconds: number | null; duration_seconds: number | null }[] =
+		await database.select(
+			'SELECT position_seconds, duration_seconds FROM watched_files WHERE mega_path = $1',
+			[key]
+		);
+	const row = rows[0];
+	if (!row || row.position_seconds == null) return null;
+	return { positionSeconds: row.position_seconds, durationSeconds: row.duration_seconds };
+}
+
+/**
+ * Drop the resume point while keeping the history row. Used when a file is
+ * watched to the end, so the next play starts from the beginning instead of
+ * jumping to the last 30 seconds.
+ *
+ * A no-op when the row doesn't exist -- deliberately: "finished a file we never
+ * recorded" must not create a history entry as a side effect.
+ *
+ * @param key Stored row key (see {@link toDbKey}), not a bare path.
+ */
+export async function clearPlaybackPosition(key: string): Promise<void> {
+	const database = await getDb();
+	await database.execute(
+		'UPDATE watched_files SET position_seconds = NULL WHERE mega_path = $1',
+		[key]
+	);
+}
+
 /**
  * Set of stored row keys of everything watched. Membership tests must build the
  * key the same way: `watched.has(toDbKey(source, path))`.

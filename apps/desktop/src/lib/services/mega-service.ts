@@ -30,6 +30,17 @@ export async function megaGetWebdavUrl(remotePath: string): Promise<string> {
 }
 
 /**
+ * Identity token of the mega-cmd-server instance currently running: bumped every
+ * time the server is observed to come back up. WebDAV URLs only stay valid for
+ * the server instance that minted them, so the prefetch cache compares this
+ * value and drops everything when it changes. Cheap (an atomic read on the Rust
+ * side, no MEGAcmd round trip).
+ */
+export async function megaServerGeneration(): Promise<number> {
+	return invoke('mega_server_generation');
+}
+
+/**
  * Recursively search the given roots for nodes whose name matches `query`.
  * `roots` is the list of starting paths: `['/']` for the cloud drive, or one
  * entry per incoming share for the shared section.

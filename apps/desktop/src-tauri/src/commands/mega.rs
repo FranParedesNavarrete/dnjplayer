@@ -68,6 +68,18 @@ pub async fn mega_ensure_server() -> Result<(), String> {
     process::ensure_server()
 }
 
+/// Identity token of the mega-cmd-server instance we are currently talking to.
+///
+/// Bumped every time the server is observed to come back up (see
+/// `mega::process::server_generation`). The frontend stores the value alongside
+/// its WebDAV URL cache and wipes the cache when it changes, because a restarted
+/// server invalidates every URL it previously minted. A plain atomic read: safe
+/// to call before every cache hit.
+#[tauri::command]
+pub async fn mega_server_generation() -> Result<u64, String> {
+    Ok(process::server_generation())
+}
+
 #[tauri::command]
 pub async fn mega_login(email: String, password: String) -> Result<String, String> {
     // Ensure server is running before login

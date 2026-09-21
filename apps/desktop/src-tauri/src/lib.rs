@@ -3,8 +3,62 @@ mod mega;
 mod pipeline;
 mod util;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri_plugin_sql::{Migration, MigrationKind};
+
+/// How long a quit may wait on MEGAcmd. `mega-exec` answers on loopback in well
+/// under a second; anything past this means the server is wedged, and a wedged
+/// helper must not hold the app's window open.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// `ExitRequested` and `Exit` can both fire for a single quit, so the teardown
+/// is latched.
+static SHUTDOWN_DONE: AtomicBool = AtomicBool::new(false);
+
+/// Orderly shutdown. Runs at most once, on the main thread, from the run-event
+/// loop.
+///
+/// What it does: stop every WebDAV location MEGAcmd is serving. `mega-cmd-server`
+/// is a SEPARATE process that outlives us, so without this the user's Mega drive
+/// stays exposed over HTTP on 127.0.0.1:4443 after the app is gone. This is the
+/// only resource that actually leaks past process exit.
+///
+/// What it deliberately does NOT do: destroy the mpv instance.
+///
+/// The crash report from 2026-09-20 (`dnjplayer-2026-09-20-201441.ips`) is a
+/// SIGSEGV inside libmpv's `hotplug_cb -> mp_msg`, reached from CoreAudio's HAL
+/// device-list queue: an audio-device-change notification delivered AFTER mpv's
+/// log context had been torn down. It reproduced during repeated init/destroy
+/// cycles. Destroying mpv here would put that exact race on the app's very last
+/// instruction, where a crash costs the user a crash report and buys nothing:
+/// the process is about to exit, and the OS reclaims mpv's memory, GPU context
+/// and audio device regardless. So mpv is left to die with the process, and the
+/// only teardown we run is the one with an externally visible effect.
+fn shutdown_once() {
+    if SHUTDOWN_DONE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    // Bounded: the actual `mega-exec` call runs on a throwaway thread so a
+    // hung MEGAcmd cannot stall the quit. If it is still running when we give
+    // up, the thread is simply abandoned along with the process.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(mega::webdav::stop_all());
+    });
+
+    match rx.recv_timeout(SHUTDOWN_TIMEOUT) {
+        Ok(Ok(())) => log::info!("[shutdown] WebDAV shares stopped"),
+        // Nothing served, or MEGAcmd not installed: both are normal, not errors.
+        Ok(Err(e)) => log::debug!("[shutdown] WebDAV stop reported: {}", e),
+        Err(_) => log::warn!(
+            "[shutdown] MEGAcmd did not answer within {:?}; quitting anyway. WebDAV shares may still be served on 127.0.0.1:4443",
+            SHUTDOWN_TIMEOUT
+        ),
+    }
+}
 
 /// Native handles for the embedded mpv video output, shared between the
 /// `commands::player` commands.
@@ -48,6 +102,12 @@ pub fn run() {
             version: 5,
             description: "create local roots table",
             sql: include_str!("db/migrations/005_local_roots.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "add resume position to watched files",
+            sql: include_str!("db/migrations/006_resume.sql"),
             kind: MigrationKind::Up,
         },
     ];
@@ -98,6 +158,7 @@ pub fn run() {
             commands::mega::mega_search,
             commands::mega::mega_get_webdav_url,
             commands::mega::mega_stop_webdav,
+            commands::mega::mega_server_generation,
             commands::mega::mega_open_install_page,
             commands::local::local_list_dir,
             commands::local::local_list_roots,
@@ -124,6 +185,15 @@ pub fn run() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running dnjplayer");
+        .build(tauri::generate_context!())
+        .expect("error while building dnjplayer")
+        // `build` + `run(callback)` instead of `run(context)` purely to get the
+        // run-event loop, which is the only place Tauri offers an exit hook.
+        // `ExitRequested` fires on Cmd+Q / last window closed; `Exit` is the
+        // last event before the process goes. Both are handled because the exact
+        // path differs per platform, and `shutdown_once` latches.
+        .run(|_app_handle, event| match event {
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => shutdown_once(),
+            _ => {}
+        });
 }
