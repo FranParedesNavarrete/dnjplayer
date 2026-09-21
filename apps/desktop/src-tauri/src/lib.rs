@@ -6,8 +6,11 @@ mod util;
 use std::sync::Mutex;
 use tauri_plugin_sql::{Migration, MigrationKind};
 
-/// Stores the mpv window handle (HWND on Windows) between attach and resize calls.
+/// Native handles for the embedded mpv video output, shared between the
+/// `commands::player` commands.
 pub struct MpvWindowState {
+    /// Windows: HWND of mpv's own top-level window after it has been re-parented
+    /// as a child of the Tauri window (see `attach_mpv_to_window`).
     pub hwnd: Mutex<Option<isize>>,
 }
 
@@ -52,6 +55,24 @@ pub fn run() {
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:dnjplayer.db", migrations)
+                .build(),
+        )
+        // Persistent logging. Without a logger installed every `log::*` call in this
+        // crate AND in tauri-plugin-libmpv is a silent no-op, so a user with a broken
+        // player had nothing to send us. LogDir on macOS is ~/Library/Logs/<bundle id>/.
+        // KeepOne + 5 MiB keeps the footprint bounded; the js_log bridge in
+        // commands/player.rs feeds the webview console into the same file.
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("dnjplayer".into()),
+                    }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                ])
+                .level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info })
+                .max_file_size(5 * 1024 * 1024)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
                 .build(),
         )
         .plugin(tauri_plugin_shell::init())
