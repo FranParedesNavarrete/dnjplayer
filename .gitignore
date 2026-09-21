@@ -23,3 +23,6 @@ docker/cache/
 *.code-workspace
 .claude
 /CLAUDE.md
+
+# Internal working docs (roadmap + analysis reports), kept out of the public repo like CLAUDE.md
+/docs/internal/

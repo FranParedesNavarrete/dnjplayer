@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { resizeMpvOverlay, hideMpvOverlay, showMpvOverlay, exitFullscreen } from '$lib/services/player-service';
-	import { playerActive, playerFullscreen, controlsPinned } from '$lib/stores/player-ui';
+	import { playerActive, playerFullscreen, controlsPinned, mpvSurfaceReady } from '$lib/stores/player-ui';
 	import { osdMessage } from '$lib/stores/player';
 	import { controlsHideDelay } from '$lib/stores/settings';
 	import PlayerControls from './PlayerControls.svelte';
@@ -12,13 +12,19 @@
 
 	const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
 	const isMacOS = navigator.platform?.toLowerCase().includes('mac') ?? false;
+
+	// SPIKE: dev-only proof that DOM paints ABOVE the video on macOS. Remove once
+	// real overlay UI (panels, popovers) lands. Never shipped: `import.meta.env.DEV`.
+	const SPIKE_OVERLAY_TEST = import.meta.env.DEV && isMacOS;
+
+	// Windows only: the native mpv window sits on top of the webview and swallows
+	// mouse-move events, so the webview can't see the cursor over the video.
 	let cursorPollTimer: ReturnType<typeof setInterval> | null = null;
 	let lastCursor = { x: -1, y: -1 };
 
 	let videoAreaEl: HTMLDivElement;
-	let rafId: number | null = null;
-	let lastRect = { x: 0, y: 0, w: 0, h: 0 };
 	let resizeObserver: ResizeObserver | null = null;
+	let lastRect = { x: -1, y: -1, w: -1, h: -1 };
 
 	// Controls auto-hide logic
 	let controlsVisible = $state(true);
@@ -52,11 +58,12 @@
 		scheduleHideControls();
 	}
 
-	// Called when the max-height transition finishes — force an immediate
-	// rect sync so mpv matches the final video-area size exactly.
+	// Called when the max-height transition finishes — the video area has its
+	// final size only now, so sync once more (ResizeObserver already tracked the
+	// intermediate frames; this guarantees the last one).
 	function handleControlsTransitionEnd(e: TransitionEvent) {
 		if (e.propertyName === 'max-height') {
-			forceRectUpdate();
+			syncVideoSurface();
 		}
 	}
 
@@ -74,11 +81,9 @@
 	});
 
 	/**
-	 * Snap a DOMRect to integer pixel boundaries, expanding outward so mpv
-	 * always FULLY covers the video-area. Without this, fractional pixel
-	 * values (e.g. 719.5) get rounded inconsistently between the webview
-	 * and the native mpv window, creating a 1-pixel gap that depends on
-	 * window size.
+	 * Snap a DOMRect to integer pixel boundaries, expanding outward so the native
+	 * surface always FULLY covers the video-area. Fractional values (e.g. 719.5)
+	 * round differently in the webview and in AppKit/Win32, leaving a 1px gap.
 	 */
 	function snapRect(rect: DOMRect) {
 		const left = Math.floor(rect.left);
@@ -94,73 +99,91 @@
 	}
 
 	/**
-	 * requestAnimationFrame loop that checks if the video area position/size
-	 * changed and calls resizeMpvOverlay when it does. This keeps the native
-	 * mpv child window perfectly in sync during window resize, layout shifts,
-	 * sidebar toggles, etc. — much more reliable than ResizeObserver + window
-	 * resize event alone.
+	 * Push the current `.video-area` rect to the native video surface.
+	 *
+	 * Event-driven, not a requestAnimationFrame loop: a ResizeObserver on the
+	 * video area catches every size change (window resize, sidebar toggle,
+	 * controls bar collapsing, fullscreen), and the window `resize` / document
+	 * `scroll` listeners cover the position-only moves the observer can't see.
+	 * The old rAF loop compared getBoundingClientRect() 60x/s forever, even with
+	 * no video, and each change blocked a tokio worker on the main thread.
 	 */
-	function syncMpvLoop() {
-		if (videoAreaEl && $playerActive) {
-			const r = snapRect(videoAreaEl.getBoundingClientRect());
-			if (
-				r.x !== lastRect.x ||
-				r.y !== lastRect.y ||
-				r.w !== lastRect.w ||
-				r.h !== lastRect.h
-			) {
-				lastRect = r;
-				resizeMpvOverlay(r.x, r.y, r.w, r.h);
-			}
-		}
-		rafId = requestAnimationFrame(syncMpvLoop);
-	}
-
-	function forceRectUpdate() {
-		if (!videoAreaEl) return;
+	function syncVideoSurface(force = false) {
+		if (!videoAreaEl || !$playerActive) return;
 		const r = snapRect(videoAreaEl.getBoundingClientRect());
+		if (r.w <= 0 || r.h <= 0) return;
+		if (!force && r.x === lastRect.x && r.y === lastRect.y && r.w === lastRect.w && r.h === lastRect.h) {
+			return;
+		}
 		lastRect = r;
 		resizeMpvOverlay(r.x, r.y, r.w, r.h);
 	}
 
-	// Re-sync the mpv overlay after entering/exiting fullscreen. The window
-	// resizes (maximize/unmaximize on macOS, setFullscreen on Windows) and the
-	// layout changes; without forcing a fresh resize the video can end up
-	// mispositioned or invisible after the transition.
+	function handleWindowResize() {
+		syncVideoSurface();
+	}
+
+	// `.content` can scroll a little (its padding plus the page height overflow
+	// the viewport at large paddings); scrolling moves the video area without
+	// resizing it, which the ResizeObserver does not report.
+	function handleScroll() {
+		syncVideoSurface();
+	}
+
+	// Re-sync after entering/exiting fullscreen. The window resizes and the layout
+	// changes; the ResizeObserver catches the size change, but the native
+	// fullscreen animation on macOS can finish after the last DOM layout, so
+	// force one more sync once it has settled.
 	$effect(() => {
 		$playerFullscreen; // track changes
-		lastRect = { x: -1, y: -1, w: -1, h: -1 };
-		const t = setTimeout(() => forceRectUpdate(), 350);
-		return () => clearTimeout(t);
+		const timer = setTimeout(() => syncVideoSurface(true), 600);
+		return () => clearTimeout(timer);
+	});
+
+	// macOS video hole: while a video is showing, no ancestor may paint under the
+	// video area because mpv's window sits BELOW the transparent Tauri window (see
+	// app.css). Windows keeps its opaque body — the mpv window is on top there.
+	$effect(() => {
+		if (!isMacOS) return;
+		document.documentElement.classList.toggle('video-hole', $playerActive);
+	});
+
+	// When playback starts while this page is mounted (or is resumed after a
+	// navigation), the surface is still hidden/misplaced: sync as soon as the
+	// player becomes active, and again once the native surface gets attached
+	// (that happens asynchronously after playerActive flips).
+	$effect(() => {
+		$mpvSurfaceReady; // track attach events
+		if ($playerActive) {
+			showMpvOverlay();
+			lastRect = { x: -1, y: -1, w: -1, h: -1 };
+			// Wait for the layout to include the controls bar before measuring.
+			const timer = setTimeout(() => syncVideoSurface(true), 0);
+			return () => clearTimeout(timer);
+		}
 	});
 
 	onMount(() => {
-		// Re-show the mpv window if playback is active (e.g., navigated away and back)
-		if ($playerActive) {
-			showMpvOverlay();
-			// Invalidate cached rect so the next rAF frame sends a resize
-			lastRect = { x: 0, y: 0, w: 0, h: 0 };
-		}
-		rafId = requestAnimationFrame(syncMpvLoop);
-
-		// ResizeObserver gives us pixel-perfect notifications when the video-area
-		// dimensions change (e.g. controls show/hide). This is more reliable than
-		// relying solely on the rAF loop catching intermediate frames.
+		// ResizeObserver gives us a notification on every size change of the
+		// video-area — including the intermediate frames of CSS transitions.
 		if (videoAreaEl && typeof ResizeObserver !== 'undefined') {
 			resizeObserver = new ResizeObserver(() => {
-				forceRectUpdate();
+				syncVideoSurface();
 			});
 			resizeObserver.observe(videoAreaEl);
 		}
+		window.addEventListener('resize', handleWindowResize);
+		document.addEventListener('scroll', handleScroll, true);
 
 		// Start the inactivity timer
 		scheduleHideControls();
 
-		// The native mpv window sits over the video and can swallow mouse-move
-		// events (Windows always; macOS in fullscreen), so the webview's
-		// onmousemove doesn't fire over the video and the controls bar can't
-		// reappear. Poll the global cursor and treat any movement as activity.
-		if (isWindows || isMacOS) {
+		// Windows: the native mpv window sits over the video and swallows
+		// mouse-move events, so the webview's onmousemove doesn't fire over the
+		// video and the controls bar could never reappear. Poll the global cursor
+		// and treat any movement as activity. Not needed on macOS: the webview is
+		// above the video and receives the mouse directly.
+		if (isWindows) {
 			cursorPollTimer = setInterval(async () => {
 				if (!$playerActive) return;
 				try {
@@ -177,14 +200,16 @@
 	});
 
 	onDestroy(() => {
-		if (rafId !== null) cancelAnimationFrame(rafId);
 		if (controlsTimer) clearTimeout(controlsTimer);
 		if (cursorPollTimer) clearInterval(cursorPollTimer);
 		if (resizeObserver) {
 			resizeObserver.disconnect();
 			resizeObserver = null;
 		}
-		// Exit immersive fullscreen and hide mpv when leaving the player page
+		window.removeEventListener('resize', handleWindowResize);
+		document.removeEventListener('scroll', handleScroll, true);
+		if (isMacOS) document.documentElement.classList.remove('video-hole');
+		// Exit immersive fullscreen and hide the video surface when leaving the page
 		exitFullscreen();
 		hideMpvOverlay();
 	});
@@ -235,6 +260,11 @@
 			</div>
 		{/if}
 
+		{#if SPIKE_OVERLAY_TEST && $playerActive}
+			<!-- SPIKE: if this is visible over the moving video, the DOM is above mpv. -->
+			<div class="spike-overlay">DOM over video (spike test)</div>
+		{/if}
+
 		<!-- OSD overlay -->
 		{#if osdText}
 			<div class="osd-overlay" class:osd-visible={osdVisible}>
@@ -249,6 +279,7 @@
 			class="controls-wrapper"
 			class:hidden={!controlsVisible}
 			class:fullscreen={$playerFullscreen}
+			class:win={isWindows}
 			ontransitionend={handleControlsTransitionEnd}
 		>
 			<PlayerControls />
@@ -266,6 +297,7 @@
 	}
 
 	.video-area {
+		position: relative;
 		flex: 1;
 		min-height: 0;
 		display: flex;
@@ -291,18 +323,27 @@
 		pointer-events: none;
 	}
 
-	/* In fullscreen the sidebar is hidden, so when the controls also collapse the
-	   native mpv window would cover the ENTIRE webview. macOS then marks the
-	   webview as occluded and freezes its timers/rendering, so the cursor poll
-	   stops and the controls can never reappear. Keep a tiny sliver of the
-	   webview uncovered so it stays "visible" and active. */
-	.controls-wrapper.hidden.fullscreen {
+	/* Windows only. In fullscreen the sidebar is hidden, so when the controls also
+	   collapse the native mpv window would cover the ENTIRE webview; Windows then
+	   treats the webview as occluded and throttles its timers, so the cursor poll
+	   stops and the controls can never reappear. Keep a tiny sliver of the webview
+	   uncovered so it stays "visible" and active. On macOS the webview is above
+	   the video and is never occluded. */
+	.controls-wrapper.hidden.fullscreen.win {
 		max-height: 4px;
 	}
 
 	.video-area.has-video {
-		/* Transparent so mpv video shows through the native window behind webview */
+		/* Transparent so the native video surface shows through */
 		background: transparent;
+	}
+
+	/* macOS video hole (see app.css): body and the layout shell stop painting, so
+	   the video area itself repaints everything AROUND it with a huge spread
+	   shadow (clipped by `.content`'s overflow). The rounded corners of the shadow
+	   double as rounded corners for the video. */
+	:global(html.video-hole) .video-area.has-video {
+		box-shadow: 0 0 0 200vmax var(--bg-primary);
 	}
 
 	.video-area:not(.has-video) {
@@ -316,6 +357,25 @@
 
 	.placeholder-icon {
 		margin-bottom: 0px;
+	}
+
+	.spike-overlay {
+		position: absolute;
+		left: 12%;
+		right: 12%;
+		top: 30%;
+		height: 40%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(255, 0, 0, 0.35);
+		border: 2px dashed #fff;
+		color: #fff;
+		font-weight: 700;
+		font-size: 1.4rem;
+		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+		pointer-events: none;
+		z-index: 5;
 	}
 
 	.osd-overlay {

@@ -6,9 +6,12 @@
 	import { theme } from '$lib/stores/theme';
 	import { megaCheckStatus } from '$lib/services/mega-service';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
+	import { invoke } from '@tauri-apps/api/core';
 	import { t } from '$lib/i18n';
 	import { checkForUpdates } from '$lib/services/update-service';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
+	import ToastHost from '$lib/components/ToastHost.svelte';
 	import { Clock, CloudDownload, HardDrive, Zap, Settings, Play, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-svelte';
 
 	let { children } = $props();
@@ -36,6 +39,17 @@
 		setTimeout(() => {
 			checkForUpdates(true).catch(() => {});
 		}, 3000);
+
+		// Dev smoke harness: jump straight to the player page, which then loads
+		// the DNJ_SMOKE_PLAY file (see routes/player/+page.svelte). No-op unless
+		// the env var is set; the command returns null in release builds.
+		if (import.meta.env.DEV) {
+			invoke<string | null>('dev_smoke_play_path')
+				.then((path) => {
+					if (path) goto('/player');
+				})
+				.catch(() => {});
+		}
 	});
 
 	function toggleSidebar() {
@@ -107,11 +121,16 @@
 						<span class="status-text">{$t['status.notConnected']}</span>
 					{/if}
 				{/if}
+	<!-- App-wide toasts (fixed, top centre). Outside the fullscreen branch so errors show everywhere. -->
+	<ToastHost />
 			</div>
 		</div>
 	</nav>
 	<main class="content">
-		<UpdateBanner />
+		<!-- Positioned + z-index so the banner paints ABOVE the video-hole backdrop
+		     (`.video-area`'s box-shadow in Player.svelte), which is painted from a
+		     positioned ancestor later in tree order and would otherwise cover it. -->
+		<div class="banner-slot"><UpdateBanner /></div>
 		{@render children()}
 	</main>
 </div>
@@ -292,6 +311,18 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: var(--page-pad);
+	}
+
+	.banner-slot {
+		position: relative;
+		z-index: 1;
+	}
+
+	/* macOS video hole (see app.css): the shell must not paint under the video.
+	   The sidebar keeps its own background, the content area is repainted by the
+	   player's backdrop shadow. */
+	:global(html.video-hole) .app-shell {
+		background: transparent;
 	}
 
 	/* Immersive fullscreen: hide sidebar/chrome so the player fills the screen. */

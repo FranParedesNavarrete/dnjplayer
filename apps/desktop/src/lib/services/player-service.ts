@@ -31,7 +31,18 @@ import {
 	currentSid
 } from '$lib/stores/player';
 import { get } from 'svelte/store';
-import { playerActive, currentVideoUrl, currentVideoTitle, playlist, playlistIndex, playerFullscreen } from '$lib/stores/player-ui';
+import {
+	playerActive,
+	currentVideoUrl,
+	currentVideoTitle,
+	playlist,
+	playlistIndex,
+	playerFullscreen,
+	playbackError,
+	mpvSurfaceReady
+} from '$lib/stores/player-ui';
+import { notify } from '$lib/stores/notifications';
+import { t } from '$lib/i18n';
 import type { VideoAdjustments, ShaderMode, ShaderVariant, MediaTrack } from '$lib/types/player';
 import { markWatched, toDbKey } from '$lib/services/db-service';
 import { resolvePlayableUrl, prefetchAround } from '$lib/services/prefetch-service';
@@ -42,7 +53,7 @@ import {
 	preferredSubtitleLang
 } from '$lib/stores/settings';
 import { activeShaderMode, shaderVariant as activeShaderVariant } from '$lib/stores/player';
-import { resolveResource } from '@tauri-apps/api/path';
+import { resolveResource, appLogDir } from '@tauri-apps/api/path';
 import { log } from '$lib/log';
 
 // Observable properties for mpv
@@ -73,8 +84,9 @@ const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
 /**
  * Build the mpv init config. This is a function (not a const) so the persisted
  * language preferences are read at init time rather than at module load time.
+ * `mpvLogFile` is a dev-only diagnostic.
  */
-function buildMpvConfig(): MpvConfig {
+function buildMpvConfig(mpvLogFile: string | null): MpvConfig {
 	const alang = get(preferredAudioLang);
 	const slang = get(preferredSubtitleLang);
 	return {
@@ -92,22 +104,40 @@ function buildMpvConfig(): MpvConfig {
 			// use its own defaults (usually the file's `default` flag order).
 			...(alang !== 'auto' ? { 'alang': alang } : {}),
 			...(slang !== 'auto' ? { 'slang': slang } : {}),
-			// On macOS/Windows, mpv must create its own separate window so we can attach it
-			// as a child/owned window of the Tauri window via native APIs.
-			// 'force-window' ensures mpv creates a window; we override 'wid' to prevent
-			// the plugin from injecting the Tauri HWND (which would embed behind the webview).
-			// wid=0 means "no parent window" so mpv creates a standalone top-level window.
+			// macOS/Windows: mpv creates its own window, which attach_mpv_to_window
+			// then hooks to the Tauri window natively (child NSWindow ordered below
+			// on macOS, Win32 child window on Windows). 'force-window' makes mpv
+			// create it right away. On macOS `wid` is irrelevant: mpv 0.40+ ignores
+			// it (its Swift backend always creates its own window — verified, see
+			// commands/player.rs), so the plugin's automatic injection is harmless.
 			...((isMacOS || isWindows) ? { 'force-window': 'yes' } : {}),
+			// Windows: wid=0 overrides the plugin's automatic HWND injection, which
+			// would embed mpv behind the webview instead of in a window we can own.
 			...(isWindows ? { 'wid': 0 } : {}),
+			// Dev-only: mpv's own log next to ours, to see what the VO does at startup.
+			...(mpvLogFile ? { 'log-file': mpvLogFile, 'msg-level': 'all=v' } : {}),
 		},
 		observedProperties: OBSERVED_PROPERTIES,
 	};
+}
+
+/** Dev-only path for mpv's `log-file` (inside the app log dir). */
+async function devMpvLogFile(): Promise<string | null> {
+	if (!import.meta.env.DEV) return null;
+	try {
+		const dir = await appLogDir();
+		return `${dir.replace(/[\\/]+$/, '')}/mpv.log`;
+	} catch {
+		return null;
+	}
 }
 
 let unlistenProperties: (() => void) | null = null;
 let unlistenEvents: (() => void) | null = null;
 let unsubscribeLangPrefs: (() => void)[] = [];
 let initialized = false;
+// True once mpv's window has been hooked to the Tauri window (macOS/Windows)
+// and may be positioned. Cleared while the surface is hidden.
 let mpvWindowAttached = false;
 
 // In-flight init, shared by concurrent callers. Without this, two overlapping
@@ -135,7 +165,7 @@ export async function initPlayer(): Promise<void> {
 }
 
 async function doInitPlayer(): Promise<void> {
-	const mpvConfig = buildMpvConfig();
+	const mpvConfig = buildMpvConfig(await devMpvLogFile());
 	log.info('[player] Initializing mpv with config:', JSON.stringify(mpvConfig.initialOptions));
 	try {
 		await init(mpvConfig);
@@ -207,12 +237,32 @@ async function doInitPlayer(): Promise<void> {
 	// 'file-loaded' is only used to re-assert the selected track ids; the track
 	// list itself arrives through the observed 'track-list' property. See the
 	// comment on refreshSelectedTracks() for why we never *pull* track-list.
+	// 'end-file' with reason 'error' is the only signal mpv gives for "could not
+	// open/decode this": loadfile itself succeeds because it merely queues the file.
 	unlistenEvents = await listenEvents((event) => {
-		if (event.event !== 'file-loaded') return;
-		refreshSelectedTracks();
+		if (event.event === 'file-loaded') {
+			refreshSelectedTracks();
+		} else if (event.event === 'end-file' && event.reason === 'error') {
+			handleLoadError(event);
+		}
 	});
 
 	attachLanguagePreferenceWatchers();
+}
+
+/**
+ * mpv gave up on the current file. Surface it to the user (persistent toast, the
+ * ToastHost renders it) and leave the player in an observable, idle state.
+ */
+function handleLoadError(event: { error?: number; file_error?: string }): void {
+	// `file_error` is mpv's own description when available; the numeric code is
+	// the MPV_ERROR_* value otherwise (e.g. -13 = loading failed).
+	const detail = event.file_error ?? `mpv error ${event.error ?? 'unknown'}`;
+	log.error('[player] end-file with reason=error:', detail, 'url:', get(currentVideoUrl));
+	playbackError.set(detail);
+	playerActive.set(false);
+	if (isMacOS || isWindows) hideMpvOverlay().catch(() => {});
+	notify('error', get(t)['player.error.loadFailed'], { detail, persistent: true });
 }
 
 /**
@@ -257,6 +307,8 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 	currentAid.set(null);
 	currentSid.set(null);
 
+	playbackError.set(null);
+
 	log.info('[player] Sending loadfile command...');
 	try {
 		await command('loadfile', [url]);
@@ -273,8 +325,8 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 	currentVideoTitle.set(title ?? null);
 	playerActive.set(true);
 
-	// On macOS/Windows, mpv creates a separate window. Attach it as a child of the Tauri window
-	// so it appears inside the app's player area instead of as a floating window.
+	// macOS/Windows: mpv creates a separate window. Attach it to the Tauri window
+	// so it appears inside the app's player area instead of floating.
 	if ((isMacOS || isWindows) && !mpvWindowAttached) {
 		log.info('[player] Starting mpv window attach...');
 		await attachMpvWindow();
@@ -319,6 +371,8 @@ async function attachMpvWindow(): Promise<void> {
 
 			await invoke('attach_mpv_to_window', { mpvWindowPtr: windowId });
 			mpvWindowAttached = true;
+			// Let Player.svelte push the current rect now that resizes are accepted.
+			mpvSurfaceReady.update((n) => n + 1);
 			log.debug('[player] mpv window attached as child, window-id:', windowId, `(attempt ${attempt})`);
 			// Newer mpv can render to the desktop on the very first attach because
 			// its window isn't fully realized yet (a stop+replay fixes it — i.e. a
@@ -338,8 +392,8 @@ async function attachMpvWindow(): Promise<void> {
 }
 
 /**
- * Resize/reposition the mpv child window to match the video area.
- * Called by Player.svelte's ResizeObserver when the video area changes.
+ * Resize/reposition the native video surface to match the video area.
+ * Called by Player.svelte whenever the `.video-area` layout changes.
  */
 export async function resizeMpvOverlay(x: number, y: number, width: number, height: number): Promise<void> {
 	if (!(isMacOS || isWindows) || !mpvWindowAttached) return;
@@ -351,7 +405,7 @@ export async function resizeMpvOverlay(x: number, y: number, width: number, heig
 }
 
 /**
- * Hide the mpv child window completely (orderOut on macOS, SW_HIDE on Windows).
+ * Hide the native video surface (host view on macOS, child window on Windows).
  * Used when stopping or navigating away from the player.
  */
 export async function hideMpvOverlay(): Promise<void> {
@@ -373,18 +427,14 @@ export async function hideMpvOverlay(): Promise<void> {
 }
 
 /**
- * Re-show the mpv window after navigating back to the player page.
- * The rAF loop in Player.svelte will call resizeMpvOverlay() which
- * triggers the Rust side to re-show the hidden window (orderFront/ShowWindow).
+ * Re-show the native video surface after navigating back to the player page.
+ * Player.svelte follows up with resizeMpvOverlay(), and the Rust side un-hides
+ * the surface as part of the resize.
  */
 export function showMpvOverlay(): void {
 	if (!(isMacOS || isWindows)) return;
 	if (!initialized) return;
-	// Mark as attached so resizeMpvOverlay() sends position updates,
-	// which in turn re-show the hidden native window.
 	mpvWindowAttached = true;
-	// Force the rAF loop to send a resize on the next frame
-	// by invalidating the cached rect in Player.svelte (handled via the flag).
 }
 
 /**
@@ -394,7 +444,7 @@ export async function stopVideo(): Promise<void> {
 	if (!initialized) return;
 	// Leave fullscreen so the user isn't stuck on a chrome-less screen after stop.
 	await exitFullscreen();
-	// Clear flags FIRST so the rAF loop stops resizing immediately
+	// Clear flags FIRST so late layout events don't re-show the surface
 	const wasAttached = mpvWindowAttached;
 	mpvWindowAttached = false;
 	playerActive.set(false);
@@ -880,8 +930,11 @@ export async function toggleFullscreen(): Promise<void> {
 	const win = getCurrentWindow();
 	const entering = !get(playerFullscreen);
 	if (isMacOS) {
-		// On macOS with child NSWindow, native fullscreen (new Space) doesn't
-		// bring the child window along. Use maximize + decorations toggle instead.
+		// Native fullscreen is a no-go with the child-window embedding: AppKit does
+		// move child windows into the fullscreen Space, but re-orders them ABOVE the
+		// parent, so the video covers the whole UI (verified in the spike; re-adding
+		// the child with NSWindowBelow after the transition doesn't stick either).
+		// Borderless + maximized keeps everything in the same Space and ordering.
 		if (entering) {
 			await win.setDecorations(false);
 			await win.maximize();
@@ -892,8 +945,8 @@ export async function toggleFullscreen(): Promise<void> {
 	} else {
 		await win.setFullscreen(entering);
 	}
-	// Drives the layout: hides sidebar/chrome and fills the viewport so the mpv
-	// overlay (which tracks the video area) covers the whole screen.
+	// Drives the layout: hides sidebar/chrome and fills the viewport so the video
+	// surface (which tracks the video area) covers the whole screen.
 	playerFullscreen.set(entering);
 }
 
@@ -912,6 +965,25 @@ export function isPlayerInitialized(): boolean {
 	return initialized;
 }
 
+// --- Dev smoke harness ---
+
+/**
+ * Development only: load `path` on the player page, unpaused and looping, so the
+ * embedding can be exercised without clicking through the file browser. Driven
+ * by the DNJ_SMOKE_PLAY env var via the `dev_smoke_play_path` command; that
+ * command returns null in release builds, so this is unreachable for users.
+ */
+export async function devSmokePlay(path: string): Promise<void> {
+	const name = path.split(/[\\/]/).pop() ?? path;
+	playlist.set([{ source: 'local', path, name }]);
+	playlistIndex.set(0);
+	await loadVideo(path, name);
+	await setProperty('loop-file', 'inf');
+	// Harness only: automated runs must not blast audio at whoever is at the desk.
+	await setProperty('mute', 'yes');
+	await setProperty('pause', 'no');
+	log.info('[player] smoke playback started:', path);
+}
 // --- Playlist navigation ---
 
 let autoAdvancing = false;

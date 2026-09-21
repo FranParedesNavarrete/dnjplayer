@@ -12,6 +12,10 @@ pub struct MpvWindowState {
     /// Windows: HWND of mpv's own top-level window after it has been re-parented
     /// as a child of the Tauri window (see `attach_mpv_to_window`).
     pub hwnd: Mutex<Option<isize>>,
+    /// macOS: mpv's own NSWindow after it has been attached as a child window
+    /// ordered BELOW the Tauri window (see `attach_mpv_to_window`). Raw pointer,
+    /// retained once by us; only dereferenced on the main thread.
+    pub mac_mpv_window: Mutex<Option<isize>>,
 }
 
 pub fn run() {
@@ -51,6 +55,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(MpvWindowState {
             hwnd: Mutex::new(None),
+            mac_mpv_window: Mutex::new(None),
         })
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -108,6 +113,7 @@ pub fn run() {
             commands::player::resize_mpv_window,
             commands::player::hide_mpv_window,
             commands::player::get_cursor_pos,
+            commands::player::dev_smoke_play_path,
         ])
         .setup(|_app| {
             // Start mega-cmd-server in background on app launch (non-blocking)
