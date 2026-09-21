@@ -197,8 +197,4 @@
 		color: var(--text-muted);
 		text-align: center;
 	}
-
-	.auth-note a {
-		color: var(--accent);
-	}
 </style>
