@@ -518,19 +518,16 @@
 {/if}
 
 <div class="player-overlay" class:over={chromeOverVideo} class:hidden={!$controlsVisible}>
-	<!-- No scrim over the video, deliberately. Every way of fading a dark gradient
-	     drew a hard 1px dark hairline across the picture where the ramp reached
-	     alpha 0: as a background on the chrome rows, as background layers on a
-	     pseudo-element, on plain fixed-height boxes, and finally as a mask over a
-	     flat black fill — a different rasteriser, same line. The line followed the
-	     ramp's terminus, and leaving the box edge unpainted did not help. Under
-	     this compositing path (a transparent webview over mpv's own NSWindow) a
-	     gradient ramping to full transparency is not usable, so legibility is
-	     carried per element instead. See the shadow rules in the styles below:
-	     they are WIDE and soft on purpose. A tight, offset, high-alpha shadow
-	     draws a crisp dark outline that reads as a double edge on the glyphs —
-	     that was tried and rejected. Shadows fade to zero well inside their own
-	     paint area, so unlike a gradient none of them has an edge to seam. -->
+	<!-- The scrim is painted BY the two chrome rows, as their own background, and
+	     that is deliberate. The last row of a gradient's ramp comes out at alpha
+	     ~1 on this compositing path — a near-black hairline — and nothing removes
+	     it: an overshooting box clipped by `.video-area`, a transparent plateau, a
+	     mask over a flat fill, and background layers on a pseudo-element were all
+	     tried and all kept it. So the line is placed rather than fought. Tying the
+	     ramp to each row's own box makes its length follow the element, so the
+	     hairline always lands exactly on that row's inner edge, where it reads as
+	     the border of the title strip and of the controls strip. Nothing to keep
+	     in sync, and it can never drift into the middle of the picture. -->
 
 	<!-- Top layer: back, title, room for future actions on the right. -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -540,7 +537,13 @@
 		onpointerleave={() => (pointerInTop = false)}
 		onpointerdown={pokeUiActivity}
 	>
-		<button class="icon-btn" onclick={handleBack} title={$t['player.back']}>
+		<button
+			class="icon-btn"
+			onclick={handleBack}
+			aria-label={$t['player.back']}
+			data-tip={$t['player.back']}
+			data-tip-align="start"
+		>
 			<ChevronLeft size={22} strokeWidth={2} />
 		</button>
 		<span class="video-title">{$currentVideoTitle ?? $filename ?? ''}</span>
@@ -601,7 +604,7 @@
 				<button
 					class="icon-btn play"
 					onclick={handleTogglePause}
-					title={displayPaused ? $t['player.play'] : $t['player.pause']}
+					aria-label={displayPaused ? $t['player.play'] : $t['player.pause']} data-tip={displayPaused ? $t['player.play'] : $t['player.pause']}
 				>
 					{#if displayPaused}
 						<Play size={24} strokeWidth={2} />
@@ -609,24 +612,24 @@
 						<Pause size={24} strokeWidth={2} />
 					{/if}
 				</button>
-				<button class="icon-btn" onclick={() => seek(-10)} title={$t['player.rewind']}>
+				<button class="icon-btn" onclick={() => seek(-10)} aria-label={$t['player.rewind']} data-tip={$t['player.rewind']}>
 					<RotateCcw size={17} strokeWidth={2} />
 				</button>
-				<button class="icon-btn" onclick={() => seek(10)} title={$t['player.forward']}>
+				<button class="icon-btn" onclick={() => seek(10)} aria-label={$t['player.forward']} data-tip={$t['player.forward']}>
 					<RotateCw size={17} strokeWidth={2} />
 				</button>
 				<button
 					class="icon-btn"
 					onclick={playPrev}
 					disabled={!hasPrev}
-					title={$t['player.prev']}
+					aria-label={$t['player.prev']} data-tip={$t['player.prev']}
 				>
 					<SkipBack size={18} strokeWidth={2} />
 				</button>
-				<button class="icon-btn" onclick={playNext} disabled={!hasNext} title={$t['player.next']}>
+				<button class="icon-btn" onclick={playNext} disabled={!hasNext} aria-label={$t['player.next']} data-tip={$t['player.next']}>
 					<SkipForward size={18} strokeWidth={2} />
 				</button>
-				<button class="icon-btn" onclick={stopVideo} title={$t['player.stop']}>
+				<button class="icon-btn" onclick={stopVideo} aria-label={$t['player.stop']} data-tip={$t['player.stop']}>
 					<Square size={16} strokeWidth={2} />
 				</button>
 
@@ -634,7 +637,7 @@
 					<button
 						class="icon-btn"
 						onclick={handleToggleMute}
-						title={$isMuted ? $t['player.unmute'] : $t['player.mute']}
+						aria-label={$isMuted ? $t['player.unmute'] : $t['player.mute']} data-tip={$isMuted ? $t['player.unmute'] : $t['player.mute']}
 					>
 						{#if $isMuted}
 							<VolumeX size={18} strokeWidth={2} />
@@ -660,7 +663,7 @@
 					class="icon-btn"
 					class:active={panel === 'speed'}
 					onclick={() => togglePanel('speed')}
-					title={$t['player.speed']}
+					aria-label={$t['player.speed']} data-tip={$t['player.speed']}
 				>
 					<Gauge size={18} strokeWidth={2} />
 					<span class="btn-tag">{$speedStore}x</span>
@@ -673,7 +676,7 @@
 						class="icon-btn"
 						class:active={panel === 'tracks'}
 						onclick={() => togglePanel('tracks')}
-						title={$t['player.tracks']}
+						aria-label={$t['player.tracks']} data-tip={$t['player.tracks']}
 					>
 						<Captions size={18} strokeWidth={2} />
 					</button>
@@ -683,7 +686,7 @@
 					class="icon-btn"
 					class:active={panel === 'video'}
 					onclick={() => togglePanel('video')}
-					title={$t['player.adjustments']}
+					aria-label={$t['player.adjustments']} data-tip={$t['player.adjustments']}
 				>
 					<SlidersHorizontal size={18} strokeWidth={2} />
 				</button>
@@ -691,7 +694,8 @@
 				<button
 					class="icon-btn"
 					onclick={toggleFullscreen}
-					title={$playerFullscreen ? $t['player.exitFullscreen'] : $t['player.fullscreen']}
+					aria-label={$playerFullscreen ? $t['player.exitFullscreen'] : $t['player.fullscreen']} data-tip={$playerFullscreen ? $t['player.exitFullscreen'] : $t['player.fullscreen']}
+					data-tip-align="end"
 				>
 					{#if $playerFullscreen}
 						<Minimize size={18} strokeWidth={2} />
@@ -801,7 +805,7 @@
 
 	.player-overlay.over {
 		--ov-text: #fff;
-		--ov-text-dim: rgba(255, 255, 255, 0.72);
+		--ov-text-dim: rgba(255, 255, 255, 0.85);
 		/* These were calibrated to sit under a dark scrim. With the scrim gone they
 		   have to hold their own against a white frame, which the anime supplies
 		   constantly, so the chips went from white-on-white (invisible over a
@@ -816,8 +820,8 @@
 		   one alike, which is why every player that has no scrim does this. */
 		--ov-rail: rgba(0, 0, 0, 0.45);
 		--ov-rail-buffered: rgba(255, 255, 255, 0.72);
-		--ov-chip: rgba(0, 0, 0, 0.45);
-		--ov-chip-hover: rgba(0, 0, 0, 0.62);
+		--ov-chip: rgba(205, 210, 220, 0.18);
+		--ov-chip-hover: rgba(215, 220, 230, 0.3);
 		--ov-chip-border: rgba(255, 255, 255, 0.22);
 		--ov-panel-bg: rgba(16, 18, 22, 0.92);
 
@@ -850,9 +854,128 @@
 	   a haze with no edge anywhere in it. */
 	.player-overlay.over .chrome-top,
 	.player-overlay.over .chrome-bottom {
-		background: none;
 		position: relative;
 		z-index: 1;
+	}
+
+	/* Tooltips. These replace the native `title` ones, which macOS renders as a
+	   grey system box that appears over the video after a delay and in the wrong
+	   place. `aria-label` keeps the accessible name, since these buttons have no
+	   visible text, and `data-tip` feeds the visual one. Not used on the panel's
+	   close button: that panel scrolls (`overflow-y: auto`), which would clip it. */
+	.player-overlay.over .icon-btn[data-tip]::after {
+		content: attr(data-tip);
+		position: absolute;
+		bottom: calc(100% + 8px);
+		left: 50%;
+		transform: translateX(-50%) translateY(4px);
+		padding: 5px 9px;
+		border-radius: 7px;
+		background: rgba(38, 40, 46, 0.8);
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		border: 1px solid var(--ov-chip-border);
+		color: #fff;
+		font-size: 0.72rem;
+		font-weight: 500;
+		line-height: 1.2;
+		white-space: nowrap;
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.12s ease, transform 0.12s ease;
+	}
+
+	.player-overlay.over .icon-btn[data-tip]:hover::after,
+	.player-overlay.over .icon-btn[data-tip]:focus-visible::after {
+		opacity: 1;
+		transform: translateX(-50%) translateY(0);
+	}
+
+	/* The two buttons at the far edges would push their tooltip off the window,
+	   so those anchor to the button instead of centring on it. */
+	.player-overlay.over .icon-btn[data-tip-align='start']::after {
+		left: 0;
+		transform: translateY(4px);
+	}
+
+	.player-overlay.over .icon-btn[data-tip-align='end']::after {
+		left: auto;
+		right: 0;
+		transform: translateY(4px);
+	}
+
+	.player-overlay.over .icon-btn[data-tip-align='start']:hover::after,
+	.player-overlay.over .icon-btn[data-tip-align='start']:focus-visible::after,
+	.player-overlay.over .icon-btn[data-tip-align='end']:hover::after,
+	.player-overlay.over .icon-btn[data-tip-align='end']:focus-visible::after {
+		transform: translateY(0);
+	}
+
+	/* The back button is on the TOP row, so its tooltip hangs below it. */
+	.player-overlay.over .chrome-top .icon-btn[data-tip]::after {
+		bottom: auto;
+		top: calc(100% + 8px);
+		transform: translateY(-4px);
+	}
+
+	.player-overlay.over .chrome-top .icon-btn[data-tip]:hover::after,
+	.player-overlay.over .chrome-top .icon-btn[data-tip]:focus-visible::after {
+		transform: translateY(0);
+	}
+
+	/* Play/pause is the one control the eye should land on first, so it gets a
+	   filled disc. Same flat chip colours as the hover pills. */
+	.player-overlay.over .icon-btn.play {
+		width: 44px;
+		height: 44px;
+		padding: 0;
+		margin-right: 6px;
+		border-radius: 50%;
+		background: var(--ov-chip);
+		transition: background 0.15s ease;
+	}
+
+	.player-overlay.over .icon-btn.play:hover {
+		background: var(--ov-chip-hover);
+	}
+
+	/* The chips are a light grey at low alpha, so on a bright frame they have
+	   almost no tone of their own to separate them from the picture. The blur
+	   does that job instead: it is what makes them read as glass rather than as
+	   a wash of paint, and it works on a dark shot and a white one alike. It goes
+	   on a rounded, self-contained box — the one shape this compositing path has
+	   never had trouble with, unlike a gradient fading across the frame. */
+	.player-overlay.over .icon-btn.play,
+	.player-overlay.over .icon-btn:hover:not(:disabled),
+	.player-overlay.over .icon-btn.active {
+		backdrop-filter: blur(12px) saturate(1.1);
+		-webkit-backdrop-filter: blur(12px) saturate(1.1);
+	}
+
+	/* A touch of feedback on the glyph itself, which costs nothing and makes the
+	   row feel alive without moving the layout. */
+	.player-overlay.over .icon-btn :global(svg) {
+		transition: transform 0.12s ease;
+	}
+
+	.player-overlay.over .icon-btn:not(:disabled):hover :global(svg) {
+		transform: scale(1.08);
+	}
+
+	/* The rows slide in from their own edge as they fade, rather than just
+	   appearing. 10px is enough to read as movement and small enough that it
+	   never looks like the layout is settling. */
+	.player-overlay.over .chrome-top,
+	.player-overlay.over .chrome-bottom {
+		transition: transform 0.2s ease;
+	}
+
+	.player-overlay.over.hidden .chrome-top {
+		transform: translateY(-10px);
+	}
+
+	.player-overlay.over.hidden .chrome-bottom {
+		transform: translateY(10px);
 	}
 
 	/* No shadow on the icons or the sliders, and this is the conclusion of several
@@ -863,12 +986,32 @@
 	   shadows the background box too, so the hover pill got a hard dark outline.
 	   Contrast over a bright frame comes from flat colour instead — see the raised
 	   rails and the dark chips in the `over` palette above. */
+	/* Mostly flat, with the fade confined to the last third. A long even ramp
+	   makes the hairline at its end look like a defect; a strip that is almost
+	   uniform and then softens into its own edge makes the very same line read as
+	   the strip's border. The paddings are tightened to hug the content: the old
+	   44px/60px were dead space the free-standing scrim needed and nothing else
+	   used. */
 	.player-overlay.over .chrome-top {
-		padding: 14px 18px 44px;
+		padding: 14px 18px 18px;
+		background: linear-gradient(
+			to bottom,
+			rgba(0, 0, 0, 0.62) 0%,
+			rgba(0, 0, 0, 0.58) 55%,
+			rgba(0, 0, 0, 0.34) 82%,
+			rgba(0, 0, 0, 0) 100%
+		);
 	}
 
 	.player-overlay.over .chrome-bottom {
-		padding: 60px 18px 16px;
+		padding: 20px 18px 16px;
+		background: linear-gradient(
+			to top,
+			rgba(0, 0, 0, 0.66) 0%,
+			rgba(0, 0, 0, 0.6) 55%,
+			rgba(0, 0, 0, 0.34) 82%,
+			rgba(0, 0, 0, 0) 100%
+		);
 	}
 
 	.player-overlay.over.hidden {

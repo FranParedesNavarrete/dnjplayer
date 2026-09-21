@@ -190,8 +190,8 @@
 	.seek-rail {
 		position: relative;
 		width: 100%;
-		height: 4px;
-		border-radius: 2px;
+		height: 5px;
+		border-radius: 3px;
 		background: var(--ov-rail);
 		transition: height 0.12s ease;
 	}
@@ -199,7 +199,7 @@
 	.seek-track:hover .seek-rail,
 	.seek-track:focus-visible .seek-rail,
 	.seek-track.scrubbing .seek-rail {
-		height: 6px;
+		height: 8px;
 	}
 
 	.seek-buffered,
@@ -222,10 +222,15 @@
 	.seek-thumb {
 		position: absolute;
 		top: 50%;
-		width: 13px;
-		height: 13px;
+		width: 14px;
+		height: 14px;
 		border-radius: 50%;
 		background: var(--accent);
+		/* A flat white ring, not a shadow: it gives the handle an edge against
+		   both a bright frame and the accent fill, and nothing here blurs, so it
+		   cannot turn into the contour that shadows did. */
+		border: 2px solid #fff;
+		box-sizing: content-box;
 		transform: translate(-50%, -50%) scale(0);
 		transition: transform 0.12s ease;
 	}
