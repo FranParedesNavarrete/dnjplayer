@@ -105,6 +105,20 @@ pub async fn mega_list_files(path: String) -> Result<Vec<MegaEntry>, String> {
         }
     };
 
+    Ok(parse_ls_output(&path, &output))
+}
+
+/// Parse `ls` / `ls -l` output into entries under `path`.
+///
+/// Both formats MEGAcmd can emit are handled:
+/// - long (`ls -l`, detected by the `FLAGS ... VERS` header): `FLAGS VERS SIZE DATE TIME NAME`,
+///   where folders have `-` as size;
+/// - plain (`ls`): names only, folders optionally suffixed with `/`. Without a
+///   suffix we fall back to "has a file extension" to tell files from folders.
+///
+/// Path header lines (shared folders print `//from/user@mail.com:Folder/Sub:`)
+/// end with `:` and are skipped.
+fn parse_ls_output(path: &str, output: &str) -> Vec<MegaEntry> {
     let mut entries = Vec::new();
     let is_long_format = output.contains("FLAGS") && output.contains("VERS");
 
@@ -135,11 +149,7 @@ pub async fn mega_list_files(path: String) -> Result<Vec<MegaEntry>, String> {
             let name = tokens[5..].join(" ");
             let clean_name = name.trim_end_matches('/').to_string();
 
-            let full_path = if path.ends_with('/') {
-                format!("{}{}", path, &clean_name)
-            } else {
-                format!("{}/{}", path, &clean_name)
-            };
+            let full_path = join_remote(path, &clean_name);
 
             let display_size = if is_folder {
                 String::new()
@@ -170,11 +180,7 @@ pub async fn mega_list_files(path: String) -> Result<Vec<MegaEntry>, String> {
             let has_trailing_slash = line.ends_with('/');
             let is_folder = has_trailing_slash || !has_file_extension(&clean_name);
 
-            let full_path = if path.ends_with('/') {
-                format!("{}{}", path, &clean_name)
-            } else {
-                format!("{}/{}", path, &clean_name)
-            };
+            let full_path = join_remote(path, &clean_name);
 
             entries.push(MegaEntry {
                 name: clean_name,
@@ -189,7 +195,17 @@ pub async fn mega_list_files(path: String) -> Result<Vec<MegaEntry>, String> {
         }
     }
 
-    Ok(entries)
+    entries
+}
+
+/// `parent` + `/` + `name`, without doubling the separator when `parent`
+/// already ends with one (e.g. the root `/`).
+fn join_remote(parent: &str, name: &str) -> String {
+    if parent.ends_with('/') {
+        format!("{}{}", parent, name)
+    } else {
+        format!("{}/{}", parent, name)
+    }
 }
 
 /// Check if a filename has a file extension (e.g. .mkv, .mp4, .txt).
@@ -217,6 +233,12 @@ pub struct MegaShare {
 #[tauri::command]
 pub async fn mega_list_shares() -> Result<Vec<MegaShare>, String> {
     let output = client::exec(&["mount"])?;
+    Ok(parse_mount_shares(&output))
+}
+
+/// Parse `mount` output. Only `INSHARE` lines matter:
+///   `INSHARE on //from/user@email.com:FolderName (read access)`
+fn parse_mount_shares(output: &str) -> Vec<MegaShare> {
     let mut shares = Vec::new();
 
     for line in output.lines() {
@@ -255,7 +277,7 @@ pub async fn mega_list_shares() -> Result<Vec<MegaShare>, String> {
         });
     }
 
-    Ok(shares)
+    shares
 }
 
 /// Maximum folder depth (relative to each search root) returned by `mega_search`.
@@ -296,49 +318,11 @@ pub async fn mega_search(query: String, roots: Vec<String>) -> Result<Vec<MegaEn
             }
         };
 
-        for line in output.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
+        for entry in parse_find_output(root, &output) {
+            // The same folder can be reached from several roots.
+            if seen.insert(entry.path.clone()) {
+                entries.push(entry);
             }
-
-            // Strip the trailing " (folder)" metadata to get the raw path.
-            let raw_path = match (line.rfind(" ("), line.ends_with(')')) {
-                (Some(idx), true) => &line[..idx],
-                _ => line,
-            };
-
-            // Rebuild an absolute path. Cloud results already start with '/';
-            // share results are relative to `//from/`.
-            let abs_path = if raw_path.starts_with('/') {
-                raw_path.to_string()
-            } else {
-                format!("//from/{}", raw_path)
-            };
-
-            // Enforce the depth cap relative to the root being searched.
-            let relative = abs_path.strip_prefix(root.as_str()).unwrap_or(&abs_path);
-            let depth = relative.split('/').filter(|s| !s.is_empty()).count();
-            if depth == 0 || depth > SEARCH_MAX_DEPTH {
-                continue;
-            }
-
-            if !seen.insert(abs_path.clone()) {
-                continue;
-            }
-
-            let name = abs_path
-                .rsplit('/')
-                .next()
-                .unwrap_or(&abs_path)
-                .to_string();
-
-            entries.push(MegaEntry {
-                name,
-                path: abs_path,
-                size: String::new(),
-                entry_type: "folder".to_string(),
-            });
         }
     }
 
@@ -350,6 +334,59 @@ pub async fn mega_search(query: String, roots: Vec<String>) -> Result<Vec<MegaEn
     }
 
     Ok(entries)
+}
+
+/// Parse one root's `find ... --type=d -l` output into folder entries.
+///
+/// Lines look like `/path/to/folder (folder)`. Share results come back
+/// relative to `//from/`, which is re-prepended. Entries deeper than
+/// `SEARCH_MAX_DEPTH` below `root` (or equal to the root itself) are dropped.
+/// Duplicates are NOT removed here; the caller dedupes across roots.
+fn parse_find_output(root: &str, output: &str) -> Vec<MegaEntry> {
+    let mut entries = Vec::new();
+
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Strip the trailing " (folder)" metadata to get the raw path.
+        let raw_path = match (line.rfind(" ("), line.ends_with(')')) {
+            (Some(idx), true) => &line[..idx],
+            _ => line,
+        };
+
+        // Rebuild an absolute path. Cloud results already start with '/';
+        // share results are relative to `//from/`.
+        let abs_path = if raw_path.starts_with('/') {
+            raw_path.to_string()
+        } else {
+            format!("//from/{}", raw_path)
+        };
+
+        // Enforce the depth cap relative to the root being searched.
+        let relative = abs_path.strip_prefix(root).unwrap_or(&abs_path);
+        let depth = relative.split('/').filter(|s| !s.is_empty()).count();
+        if depth == 0 || depth > SEARCH_MAX_DEPTH {
+            continue;
+        }
+
+        let name = abs_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&abs_path)
+            .to_string();
+
+        entries.push(MegaEntry {
+            name,
+            path: abs_path,
+            size: String::new(),
+            entry_type: "folder".to_string(),
+        });
+    }
+
+    entries
 }
 
 #[tauri::command]
@@ -395,4 +432,161 @@ fn parse_whoami_email(output: &str) -> Option<String> {
         .and_then(|l| l.split(':').nth(1))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(entries: &[MegaEntry]) -> Vec<(&str, &str)> {
+        entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.entry_type.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn file_extension_heuristic() {
+        assert!(has_file_extension("episode.mkv"));
+        assert!(has_file_extension("archive.tar.gz"));
+        assert!(has_file_extension("subs.SRT"));
+        assert!(has_file_extension("clip.m4v"));
+        // Folder-like names
+        assert!(!has_file_extension("Season 1"));
+        assert!(!has_file_extension("Mr. Robot")); // ext would contain a space
+        assert!(!has_file_extension("trailing."));
+        assert!(!has_file_extension("no-ext"));
+        assert!(!has_file_extension("x.toolongextension")); // > 10 chars
+        assert!(!has_file_extension("v.1-2")); // non-alphanumeric ext
+    }
+
+    #[test]
+    fn whoami_email_is_extracted() {
+        assert_eq!(
+            parse_whoami_email("Account e-mail: user@example.com"),
+            Some("user@example.com".to_string())
+        );
+        assert_eq!(
+            parse_whoami_email("[some notice]\nAccount e-mail:   user@example.com  \nOther: x"),
+            Some("user@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn whoami_without_email_is_none() {
+        assert_eq!(parse_whoami_email("Not logged in."), None);
+        assert_eq!(parse_whoami_email("Account e-mail:"), None);
+        assert_eq!(parse_whoami_email(""), None);
+    }
+
+    #[test]
+    fn plain_ls_uses_slash_or_extension_to_classify() {
+        let out = "Season 1/\nExtras\nep01.mkv\nep01.srt\n\n";
+        let entries = parse_ls_output("/Anime/Show", out);
+        assert_eq!(
+            names(&entries),
+            vec![
+                ("Season 1", "folder"),
+                ("Extras", "folder"),
+                ("ep01.mkv", "file"),
+                ("ep01.srt", "file"),
+            ]
+        );
+        assert_eq!(entries[0].path, "/Anime/Show/Season 1");
+        assert_eq!(entries[2].path, "/Anime/Show/ep01.mkv");
+        assert!(entries.iter().all(|e| e.size.is_empty()));
+    }
+
+    #[test]
+    fn plain_ls_at_root_does_not_double_the_slash() {
+        let entries = parse_ls_output("/", "Movies/");
+        assert_eq!(entries[0].path, "/Movies");
+    }
+
+    #[test]
+    fn plain_ls_skips_share_header_lines() {
+        let out = "//from/user@mail.com:Folder/Sub:\nep01.mkv\n";
+        let entries = parse_ls_output("//from/user@mail.com:Folder/Sub", out);
+        assert_eq!(names(&entries), vec![("ep01.mkv", "file")]);
+        assert_eq!(entries[0].path, "//from/user@mail.com:Folder/Sub/ep01.mkv");
+    }
+
+    #[test]
+    fn long_ls_reads_size_and_folder_marker() {
+        let out = "\
+FLAGS  VERS      SIZE  DATE        TIME  NAME
+d---    -            -  01Jan2024  10:00  Season 1
+----    1    734003200  01Jan2024  10:00  ep01 v2.mkv
+----    1         2048  01Jan2024  10:00  ep01.srt
+garbage line
+";
+        let entries = parse_ls_output("/Show", out);
+        assert_eq!(
+            names(&entries),
+            vec![
+                ("Season 1", "folder"),
+                ("ep01 v2.mkv", "file"),
+                ("ep01.srt", "file"),
+            ]
+        );
+        assert_eq!(entries[0].size, "");
+        assert_eq!(entries[1].size, "700.0 MB");
+        assert_eq!(entries[2].size, "2 KB");
+        assert_eq!(entries[1].path, "/Show/ep01 v2.mkv");
+    }
+
+    #[test]
+    fn mount_output_yields_incoming_shares() {
+        let out = "\
+ROOT on /
+INBOX on //in
+RUBBISH on //bin
+INSHARE on //from/friend@mail.com:Anime (read access)
+INSHARE on //from/other@mail.com:Movies HD (full access)
+";
+        let shares = parse_mount_shares(out);
+        assert_eq!(shares.len(), 2);
+        assert_eq!(shares[0].name, "Anime");
+        assert_eq!(shares[0].owner, "friend@mail.com");
+        assert_eq!(shares[0].path, "//from/friend@mail.com:Anime");
+        assert_eq!(shares[0].access, "read access");
+        assert_eq!(shares[1].name, "Movies HD");
+        assert_eq!(shares[1].access, "full access");
+    }
+
+    #[test]
+    fn mount_without_access_suffix_still_parses() {
+        let shares = parse_mount_shares("INSHARE on //from/a@b.c:Folder");
+        assert_eq!(shares.len(), 1);
+        assert_eq!(shares[0].name, "Folder");
+        assert_eq!(shares[0].owner, "a@b.c");
+        assert_eq!(shares[0].access, "");
+    }
+
+    #[test]
+    fn find_output_strips_marker_and_caps_depth() {
+        let out = "\
+/Anime (folder)
+/Anime/Naruto (folder)
+/Anime/Naruto/Season 1 (folder)
+/Anime/a/b/c/d (folder)
+/Anime/a/b/c/d/e (folder)
+";
+        let entries = parse_find_output("/Anime", out);
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        // Root itself (depth 0) and depth 5 are excluded; depth 4 is kept.
+        assert_eq!(paths, vec!["/Anime/Naruto", "/Anime/Naruto/Season 1", "/Anime/a/b/c/d"]);
+        assert_eq!(entries[1].name, "Season 1");
+        assert!(entries.iter().all(|e| e.entry_type == "folder"));
+    }
+
+    #[test]
+    fn find_output_in_shares_gets_from_prefix_back() {
+        let root = "//from/friend@mail.com:Anime";
+        let out = "friend@mail.com:Anime/Naruto (folder)\n";
+        let entries = parse_find_output(root, out);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "//from/friend@mail.com:Anime/Naruto");
+        assert_eq!(entries[0].name, "Naruto");
+    }
 }

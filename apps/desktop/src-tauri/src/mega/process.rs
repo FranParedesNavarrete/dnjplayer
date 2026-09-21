@@ -3,7 +3,7 @@ use crate::util::command::hidden_command;
 
 /// Check if mega-cmd-server is running and responsive
 pub fn is_server_running() -> bool {
-    client::exec(&["version"]).is_ok()
+    client::version().is_ok()
 }
 
 /// Check if MEGAcmd is installed on the system
