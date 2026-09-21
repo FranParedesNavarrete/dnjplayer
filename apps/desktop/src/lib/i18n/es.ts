@@ -87,6 +87,13 @@ export const es: Record<string, string> = {
 	'player.loadSubtitles': 'Cargar subtítulos…',
 	'player.trackUnnamed': 'Pista {n}',
 	'player.noTracks': 'No hay pistas alternativas',
+	'player.back': 'Volver',
+	'player.close': 'Cerrar',
+	'player.seek': 'Línea de tiempo',
+	'player.volume': 'Volumen',
+	'player.speed': 'Velocidad de reproducción',
+	'player.speedHint': 'Mantén Espacio para ir a 2x mientras lo pulsas',
+	'player.subtitleDelay': 'Retardo de subtítulos (G/H)',
 	'player.error.loadFailed': 'No se ha podido reproducir el vídeo',
 	'player.error.detail': 'Detalles',
 
@@ -166,6 +173,8 @@ export const es: Record<string, string> = {
 	'player.osd.shaderB': 'Anime4K: Tipo B (720p)',
 	'player.osd.shaderC': 'Anime4K: Tipo C (480p)',
 	'player.osd.shaderOff': 'Anime4K: Limpio',
+	'player.osd.subDelay': 'Retardo de subtítulos: {value} ms',
+	'player.osd.speedBoost': 'Velocidad {value}x',
 
 	// Actualizaciones
 	'update.available': 'Actualización disponible: v{version}',

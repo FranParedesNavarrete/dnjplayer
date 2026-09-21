@@ -1,21 +1,22 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { resizeMpvOverlay, hideMpvOverlay, showMpvOverlay, exitFullscreen } from '$lib/services/player-service';
-	import { playerActive, playerFullscreen, controlsPinned, mpvSurfaceReady } from '$lib/stores/player-ui';
+	import {
+		playerActive,
+		playerFullscreen,
+		controlsVisible,
+		pokeUiActivity,
+		mpvSurfaceReady,
+		chromeOverVideo,
+	} from '$lib/stores/player-ui';
 	import { osdMessage } from '$lib/stores/player';
-	import { controlsHideDelay } from '$lib/stores/settings';
-	import PlayerControls from './PlayerControls.svelte';
+	import PlayerOverlay from './PlayerOverlay.svelte';
 	import { Play } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
-	import { get } from 'svelte/store';
 	import { invoke } from '@tauri-apps/api/core';
 
 	const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
 	const isMacOS = navigator.platform?.toLowerCase().includes('mac') ?? false;
-
-	// SPIKE: dev-only proof that DOM paints ABOVE the video on macOS. Remove once
-	// real overlay UI (panels, popovers) lands. Never shipped: `import.meta.env.DEV`.
-	const SPIKE_OVERLAY_TEST = import.meta.env.DEV && isMacOS;
 
 	// Windows only: the native mpv window sits on top of the webview and swallows
 	// mouse-move events, so the webview can't see the cursor over the video.
@@ -26,41 +27,15 @@
 	let resizeObserver: ResizeObserver | null = null;
 	let lastRect = { x: -1, y: -1, w: -1, h: -1 };
 
-	// Controls auto-hide logic
-	let controlsVisible = $state(true);
-	let controlsTimer: ReturnType<typeof setTimeout> | null = null;
-
 	// OSD fade logic
 	let osdVisible = $state(false);
 	let osdText = $state('');
 	let osdTimer: ReturnType<typeof setTimeout> | null = null;
 
-	function scheduleHideControls() {
-		if (controlsTimer) {
-			clearTimeout(controlsTimer);
-			controlsTimer = null;
-		}
-		// An expanded inline panel (tracks / adjustments) pins the bar open —
-		// collapsing it mid-interaction would yank the panel away.
-		if (get(controlsPinned)) return;
-		const delay = get(controlsHideDelay);
-		// delay === 0 means "never hide"
-		if (delay <= 0) return;
-		controlsTimer = setTimeout(() => {
-			controlsVisible = false;
-		}, delay);
-	}
-
-	function handleMouseMove() {
-		if (!controlsVisible) {
-			controlsVisible = true;
-		}
-		scheduleHideControls();
-	}
-
 	// Called when the max-height transition finishes — the video area has its
 	// final size only now, so sync once more (ResizeObserver already tracked the
-	// intermediate frames; this guarantees the last one).
+	// intermediate frames; this guarantees the last one). Only reachable in
+	// 'below' chrome mode: the floating overlay never resizes anything.
 	function handleControlsTransitionEnd(e: TransitionEvent) {
 		if (e.propertyName === 'max-height') {
 			syncVideoSurface();
@@ -175,8 +150,8 @@
 		window.addEventListener('resize', handleWindowResize);
 		document.addEventListener('scroll', handleScroll, true);
 
-		// Start the inactivity timer
-		scheduleHideControls();
+		// Start the inactivity countdown (PlayerOverlay owns the timer).
+		pokeUiActivity();
 
 		// Windows: the native mpv window sits over the video and swallows
 		// mouse-move events, so the webview's onmousemove doesn't fire over the
@@ -190,7 +165,7 @@
 					const pos = await invoke<[number, number]>('get_cursor_pos');
 					if (pos[0] !== lastCursor.x || pos[1] !== lastCursor.y) {
 						lastCursor = { x: pos[0], y: pos[1] };
-						handleMouseMove();
+						pokeUiActivity();
 					}
 				} catch {
 					// ignore
@@ -200,8 +175,8 @@
 	});
 
 	onDestroy(() => {
-		if (controlsTimer) clearTimeout(controlsTimer);
 		if (cursorPollTimer) clearInterval(cursorPollTimer);
+		if (osdTimer) clearTimeout(osdTimer);
 		if (resizeObserver) {
 			resizeObserver.disconnect();
 			resizeObserver = null;
@@ -213,42 +188,17 @@
 		exitFullscreen();
 		hideMpvOverlay();
 	});
-
-	// Keep the bar open while a panel pins it, and re-arm the inactivity timer as
-	// soon as it gets unpinned (otherwise nothing would reschedule until the next
-	// cursor movement).
-	$effect(() => {
-		if ($controlsPinned) {
-			controlsVisible = true;
-			if (controlsTimer) {
-				clearTimeout(controlsTimer);
-				controlsTimer = null;
-			}
-		} else if ($playerActive) {
-			scheduleHideControls();
-		}
-	});
-
-	// Reset timer when playback state or hide-delay setting changes
-	$effect(() => {
-		const _active = $playerActive;
-		const delay = $controlsHideDelay;
-		if (_active) {
-			if (delay <= 0) {
-				// Never hide — make sure controls are visible and cancel any timer
-				controlsVisible = true;
-				if (controlsTimer) {
-					clearTimeout(controlsTimer);
-					controlsTimer = null;
-				}
-			} else {
-				scheduleHideControls();
-			}
-		}
-	});
 </script>
 
-<div class="player-wrapper" onmousemove={handleMouseMove} role="presentation">
+<!-- `cursor: none` only where the DOM is above the video: there the webview owns
+     the pointer over the picture. On Windows the native window does, so hiding
+     the webview cursor would be both useless and confusing. -->
+<div
+	class="player-wrapper"
+	class:cursor-hidden={chromeOverVideo && $playerActive && !$controlsVisible}
+	onmousemove={pokeUiActivity}
+	role="presentation"
+>
 	<!-- Transparent video area — mpv renders behind this -->
 	<div class="video-area" class:has-video={$playerActive} bind:this={videoAreaEl}>
 		{#if !$playerActive}
@@ -260,29 +210,32 @@
 			</div>
 		{/if}
 
-		{#if SPIKE_OVERLAY_TEST && $playerActive}
-			<!-- SPIKE: if this is visible over the moving video, the DOM is above mpv. -->
-			<div class="spike-overlay">DOM over video (spike test)</div>
-		{/if}
-
 		<!-- OSD overlay -->
 		{#if osdText}
 			<div class="osd-overlay" class:osd-visible={osdVisible}>
 				{osdText}
 			</div>
 		{/if}
+
+		<!-- macOS: the chrome floats INSIDE the video area, absolutely positioned.
+		     It is mounted here (and not below) so it can never influence the
+		     video-area rectangle the native surface is synced to. -->
+		{#if chromeOverVideo && $playerActive}
+			<PlayerOverlay />
+		{/if}
 	</div>
 
-	<!-- Controls bar below video (auto-hides after inactivity) -->
-	{#if $playerActive}
+	<!-- Windows/Linux: the chrome is a bar BELOW the video that pushes it up, and
+	     auto-hiding collapses it (the ResizeObserver then re-syncs the surface). -->
+	{#if !chromeOverVideo && $playerActive}
 		<div
 			class="controls-wrapper"
-			class:hidden={!controlsVisible}
+			class:hidden={!$controlsVisible}
 			class:fullscreen={$playerFullscreen}
 			class:win={isWindows}
 			ontransitionend={handleControlsTransitionEnd}
 		>
-			<PlayerControls />
+			<PlayerOverlay />
 		</div>
 	{/if}
 </div>
@@ -294,6 +247,10 @@
 		height: 100%;
 		display: flex;
 		flex-direction: column;
+	}
+
+	.player-wrapper.cursor-hidden {
+		cursor: none;
 	}
 
 	.video-area {
@@ -357,25 +314,6 @@
 
 	.placeholder-icon {
 		margin-bottom: 0px;
-	}
-
-	.spike-overlay {
-		position: absolute;
-		left: 12%;
-		right: 12%;
-		top: 30%;
-		height: 40%;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: rgba(255, 0, 0, 0.35);
-		border: 2px dashed #fff;
-		color: #fff;
-		font-weight: 700;
-		font-size: 1.4rem;
-		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-		pointer-events: none;
-		z-index: 5;
 	}
 
 	.osd-overlay {
