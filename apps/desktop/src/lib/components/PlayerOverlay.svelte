@@ -16,6 +16,8 @@
 		osdMessage,
 		isMuted,
 		bufferedUntil,
+		isBuffering,
+		isLoading,
 	} from '$lib/stores/player';
 	import {
 		currentVideoTitle,
@@ -75,6 +77,9 @@
 		X,
 	} from 'lucide-svelte';
 	import { t } from '$lib/i18n';
+	import { Loader2 } from 'lucide-svelte';
+	import { stepSpinner, IDLE_SPINNER, type SpinnerState } from '$lib/utils/buffering';
+	import { digitShortcut, isDigitRowKey, type DigitAction } from '$lib/utils/shortcuts';
 	import type { ShaderMode } from '$lib/types/player';
 
 	// The "loaded up to here" bar reads mpv's demuxer cache directly (Phase 3):
@@ -141,8 +146,14 @@
 
 	// An open panel pins the chrome open (CLAUDE.md #2: mpv swallows clicks over
 	// the video, so a panel that collapsed under the cursor would be unrecoverable).
+	//
+	// In 'below' mode the buffering indicator has to pin it too. There the whole
+	// bar collapses to zero height when it hides, and it is the only place the
+	// indicator can live — nothing may be drawn over the native mpv window on
+	// Windows (CLAUDE.md #2) — so without this the "it is loading, not frozen"
+	// message would vanish exactly when the user starts wondering.
 	$effect(() => {
-		controlsPinned.set(panel !== 'none');
+		controlsPinned.set(panel !== 'none' || (!chromeOverVideo && showSpinner));
 	});
 
 	// Auto-advance to the next item when the current video ends.
@@ -151,14 +162,27 @@
 	});
 
 	// A new file invalidates the subtitle delay we are tracking locally.
+	//
+	// It has to reset MPV too, not just this variable: `sub-delay` is a global mpv
+	// option and `loadfile` does not clear it (the same trap `start` has). Zeroing
+	// only the local copy meant five taps of G on episode 1 carried -0.5 s into
+	// episode 2 while the panel and the OSD both claimed 0 ms, and the next tap
+	// jumped from -500 ms to -100 ms. player-service.ts also zeroes it on load;
+	// this keeps the two in step when the overlay is mounted mid-playback.
 	$effect(() => {
 		$currentVideoUrl;
 		subtitleDelayMs = 0;
+		setSubtitleDelay(0);
 	});
 
 	onDestroy(() => {
 		controlsPinned.set(false);
 		controlsVisible.set(true);
+		// Unmounting with the 2x hold active (navigating away with Space held, or
+		// the reportLoadFailure() unmount) used to leave mpv at speed=2 for the rest
+		// of the session, because keyup never arrived. endSpeedBoost() also clears
+		// spaceHoldTimer, so it covers the plain-hold case too.
+		endSpeedBoost();
 		if (spaceHoldTimer) clearTimeout(spaceHoldTimer);
 		if (pauseReconcileTimer) clearTimeout(pauseReconcileTimer);
 	});
@@ -203,6 +227,36 @@
 		}
 	});
 	onDestroy(unsubscribePaused);
+
+	// --- Buffering indicator -------------------------------------------------
+
+	// `isLoading` is TRUE whenever no file is loaded (there is no duration), so it
+	// MUST be gated on `playerActive` or an idle player shows a permanent spinner.
+	// `isSeeking` is deliberately NOT part of this: a seek that completes normally
+	// settles well inside the grace delay, and one that stalls shows up as
+	// `paused-for-cache` anyway — including it only made local seeks flash.
+	let spinnerBusy = $derived($playerActive && ($isBuffering || $isLoading));
+
+	// The grace/minimum-visible hysteresis lives in utils/buffering.ts as a pure
+	// step function, so the component owns exactly one timer: the step tells us
+	// when it next wants to be looked at.
+	let spinnerState = $state<SpinnerState>(IDLE_SPINNER);
+	let showSpinner = $derived(spinnerState.visible);
+
+	$effect(() => {
+		// Read the dependency first so the effect tracks it.
+		const busy = spinnerBusy;
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		const advance = () => {
+			const step = stepSpinner(spinnerState, busy, Date.now());
+			spinnerState = step.state;
+			if (step.recheckInMs != null) timer = setTimeout(advance, step.recheckInMs);
+		};
+		advance();
+		return () => {
+			if (timer) clearTimeout(timer);
+		};
+	});
 
 	// --- Misc actions --------------------------------------------------------
 
@@ -270,11 +324,47 @@
 		return true;
 	}
 
+	function applyDigitAction(action: DigitAction) {
+		if (action.kind === 'shader') {
+			switchShaderMode(action.mode);
+			return;
+		}
+		const current =
+			action.property === 'contrast'
+				? $contrast
+				: action.property === 'brightness'
+					? $brightness
+					: $saturation;
+		// mpv clamps these to -100..100 itself, but clamping here keeps the stores
+		// (and therefore the sliders in VideoPanel) from drifting past the ends.
+		const next = Math.max(Math.min(current + action.delta, 100), -100);
+		setVideoAdjustment(action.property, next);
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		if (isTextEntryTarget(e.target)) return;
-		// Shift is part of several shortcuts ('!', fine seek); the other modifiers
-		// belong to the OS and the app menu (Cmd+R must not reset the image).
+		// Shift is part of several shortcuts (the Anime4K presets, fine seek), so it
+		// is NOT in this guard; the other modifiers belong to the OS and the app
+		// menu (Cmd+R must not reset the image).
 		if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+		// Number row FIRST, and by physical key. These used to be matched on the
+		// produced character ('!', '@', '#', ')'), which is Shift+1/2/3/0 only on a
+		// US layout — on Spanish ISO, Shift+2 is '\"', so Anime4K modes B and C and
+		// the "off" switch were unreachable. `e.code` names the key by position on
+		// any layout. See utils/shortcuts.ts.
+		if (isDigitRowKey(e.code)) {
+			const action = digitShortcut(e.code, e.shiftKey);
+			// An unbound digit is swallowed rather than allowed to fall through to
+			// the character switch, where some layout's character for it could
+			// collide with an unrelated letter shortcut.
+			e.preventDefault();
+			if (action) {
+				applyDigitAction(action);
+				pokeUiActivity();
+			}
+			return;
+		}
 
 		// Letters are matched case-insensitively so Caps Lock / Shift+J still work.
 		const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
@@ -363,53 +453,8 @@
 				e.preventDefault();
 				break;
 
-			// Contrast: 1 / 2
-			case '1':
-				setVideoAdjustment('contrast', Math.max($contrast - 5, -100));
-				e.preventDefault();
-				break;
-			case '2':
-				setVideoAdjustment('contrast', Math.min($contrast + 5, 100));
-				e.preventDefault();
-				break;
-
-			// Brightness: 3 / 4
-			case '3':
-				setVideoAdjustment('brightness', Math.min($brightness + 5, 100));
-				e.preventDefault();
-				break;
-			case '4':
-				setVideoAdjustment('brightness', Math.max($brightness - 5, -100));
-				e.preventDefault();
-				break;
-
-			// Saturation: 7 / 8
-			case '7':
-				setVideoAdjustment('saturation', Math.max($saturation - 5, -100));
-				e.preventDefault();
-				break;
-			case '8':
-				setVideoAdjustment('saturation', Math.min($saturation + 5, 100));
-				e.preventDefault();
-				break;
-
-			// Anime4K shader modes: Shift + 1/2/3/0
-			case '!':
-				switchShaderMode('A');
-				e.preventDefault();
-				break;
-			case '@':
-				switchShaderMode('B');
-				e.preventDefault();
-				break;
-			case '#':
-				switchShaderMode('C');
-				e.preventDefault();
-				break;
-			case ')':
-				switchShaderMode('off');
-				e.preventDefault();
-				break;
+			// The number row (image adjustments, and Shift + digit for the Anime4K
+			// presets) is handled above, by physical key rather than by character.
 
 			// Playback speed: [ / ]
 			case '[':
@@ -454,6 +499,23 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} onkeyup={handleKeyup} onblur={handleWindowBlur} />
+
+<!-- Buffering indicator, centred on the video. Deliberately a SIBLING of
+     `.player-overlay` and not a child: the chrome hides by setting `opacity: 0`
+     on that element, and a child can't opt out of an ancestor's opacity — the
+     spinner has to survive the auto-hide, since a stall is most alarming exactly
+     when the controls are gone. Only in 'over' mode; in 'below' mode the native
+     mpv window is painted on top of the webview, so anything positioned here
+     would simply be invisible (CLAUDE.md #2) and the chip inside the bar is used
+     instead. -->
+{#if chromeOverVideo && showSpinner}
+	<div class="buffering-layer" role="status" aria-live="polite">
+		<div class="buffering-badge">
+			<Loader2 class="spin" size={34} strokeWidth={2.2} />
+			<span>{$t['player.buffering']}</span>
+		</div>
+	</div>
+{/if}
 
 <div class="player-overlay" class:over={chromeOverVideo} class:hidden={!$controlsVisible}>
 	<!-- Top layer: back, title, room for future actions on the right. -->
@@ -505,6 +567,16 @@
 				{:else}
 					<VideoPanel />
 				{/if}
+			</div>
+		{/if}
+
+		<!-- 'below' mode only (see the layer above for why). Sits over the seek row
+		     so it never reflows the bar, which on Windows would resize the video
+		     area and re-trigger the native surface sync. -->
+		{#if !chromeOverVideo && showSpinner}
+			<div class="buffering-chip" role="status" aria-live="polite">
+				<Loader2 class="spin" size={14} strokeWidth={2.4} />
+				<span>{$t['player.buffering']}</span>
 			</div>
 		{/if}
 
@@ -619,6 +691,86 @@
 </div>
 
 <style>
+	/* Buffering indicator. `inset: 0` resolves against `.video-area`
+	   (position: relative, Player.svelte), the same box the chrome uses, so the
+	   badge lands in the middle of the picture. `pointer-events: none` throughout:
+	   it must never intercept a click meant for the video or the chrome. */
+	.buffering-layer {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		pointer-events: none;
+		/* Above the chrome (z-index 6) but below the OSD (10), which is a direct
+		   response to a key the user just pressed and outranks a status hint. */
+		z-index: 8;
+	}
+
+	.buffering-badge {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 10px;
+		padding: 18px 26px;
+		border-radius: 14px;
+		background: rgba(0, 0, 0, 0.55);
+		backdrop-filter: blur(10px);
+		color: #fff;
+		font-size: 0.82rem;
+		font-weight: 500;
+		letter-spacing: 0.01em;
+		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+		animation: buffering-in 0.18s ease-out;
+	}
+
+	/* 'below' mode: a compact chip in the bar instead of a badge on the video. */
+	.buffering-chip {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		align-self: flex-start;
+		padding: 2px 8px;
+		border-radius: 999px;
+		background: var(--ov-chip);
+		border: 1px solid var(--ov-chip-border);
+		color: var(--ov-text-dim);
+		font-size: 0.72rem;
+		white-space: nowrap;
+	}
+
+	/* lucide-svelte forwards `class` to the <svg>, and the icon is rendered by a
+	   child component, so the selector has to be :global. */
+	.buffering-badge :global(.spin),
+	.buffering-chip :global(.spin) {
+		animation: buffering-spin 0.9s linear infinite;
+	}
+
+	@keyframes buffering-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	@keyframes buffering-in {
+		from {
+			opacity: 0;
+			transform: scale(0.94);
+		}
+	}
+
+	/* Respect the OS setting: the spinner is a status hint, not information that
+	   depends on motion, so freezing it loses nothing. */
+	@media (prefers-reduced-motion: reduce) {
+		.buffering-badge :global(.spin),
+		.buffering-chip :global(.spin) {
+			animation: none;
+		}
+		.buffering-badge {
+			animation: none;
+		}
+	}
+
 	/* Overlay colour tokens. Custom properties inherit, so the child components
 	   (SeekBar, panels) pick these up without re-declaring them. Two sets: one for
 	   chrome drawn on top of arbitrary video frames, one for the classic bar. */

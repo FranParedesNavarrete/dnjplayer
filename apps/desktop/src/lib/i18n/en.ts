@@ -94,8 +94,10 @@ export const en: Record<string, string> = {
 	'player.speed': 'Playback speed',
 	'player.speedHint': 'Hold Space for 2x while it lasts',
 	'player.subtitleDelay': 'Subtitle delay (G/H)',
+	'player.buffering': 'Buffering…',
 	'player.error.loadFailed': 'Could not play this video',
 	'player.error.detail': 'Details',
+	'player.error.streamExpired': 'The stream expired; reconnecting…',
 
 	// Notifications (ToastHost)
 	'notify.dismiss': 'Dismiss',

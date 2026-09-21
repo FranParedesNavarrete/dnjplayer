@@ -51,7 +51,13 @@ import {
 } from '$lib/stores/player-ui';
 import { notify } from '$lib/stores/notifications';
 import { t } from '$lib/i18n';
-import type { VideoAdjustments, ShaderMode, ShaderVariant, MediaTrack } from '$lib/types/player';
+import type {
+	VideoAdjustments,
+	ShaderMode,
+	ShaderVariant,
+	MediaTrack,
+	PlaylistItem
+} from '$lib/types/player';
 import {
 	markWatched,
 	toDbKey,
@@ -66,6 +72,11 @@ import {
 	resumePositionFor
 } from '$lib/utils/resume';
 import { isRemoteUrl, streamProfileFor } from '$lib/utils/stream-profile';
+// The track-list / aid / sid parsers live in utils/track-list.ts so they can be
+// unit tested: THIS module imports the libmpv plugin at the top level and cannot
+// load under Node, which is why ~90 lines of defensive parsing had no coverage.
+import { parseTrackList, parseTrackId, asFlag } from '$lib/utils/track-list';
+import { shouldPreopenNext, PREOPEN_LEAD_SECONDS } from '$lib/utils/preopen';
 import {
 	defaultShaderMode,
 	defaultShaderVariant,
@@ -172,7 +183,21 @@ function buildMpvConfig(mpvLogFile: string | null): MpvConfig {
 		initialOptions: {
 			...RENDER_OPTIONS,
 			'hwdec': 'auto-safe',
-			'keep-open': 'yes',
+			// `always`, not `yes`. Measured on mpv 0.41.0: with `yes` and a next
+			// playlist entry present, mpv advances BY ITSELF at EOF and
+			// `eof-reached` goes to null — never true — so the eof-reached observer
+			// below (our only auto-advance trigger) would stop firing the moment the
+			// queue pre-open put a second entry in mpv's playlist. `always` parks at
+			// EOF regardless of what follows, which keeps that trigger intact and
+			// leaves US in charge of when to move on. With a single-entry playlist
+			// (the pre-open's fallback) `always` and `yes` behave identically.
+			'keep-open': 'always',
+			// Open the NEXT playlist entry's demuxer while the current file plays.
+			// This is the whole point of the queue pre-open: opening a Matroska
+			// stream over WebDAV costs three sequential HTTP round trips, which
+			// measured 6.07 s of frozen picture between episodes without this and
+			// 0.11 s with it. See utils/preopen.ts for the full measurement.
+			'prefetch-playlist': 'yes',
 			'osc': 'no',
 			'input-default-bindings': 'no',
 			'input-vo-keyboard': 'no',
@@ -402,6 +427,9 @@ async function doInitPlayer(): Promise<void> {
 					break;
 				case 'time-pos':
 					currentTime.set(typeof data === 'number' ? data : null);
+					// Driven from mpv's own clock rather than from a component, so the
+					// pre-open still happens if the overlay is not mounted.
+					maybePreopenNext(typeof data === 'number' ? data : null);
 					break;
 				case 'duration':
 					duration.set(typeof data === 'number' ? data : null);
@@ -519,9 +547,28 @@ function handleLoadError(event: { error?: number; file_error?: string }): void {
 	reportLoadFailure(detail);
 }
 
-/** Put the player in an observable, idle, failed state and tell the user. */
+/**
+ * Put the player in an observable, idle, failed state and tell the user.
+ *
+ * Leaving fullscreen is NOT cosmetic, it is the only way out of the app. The
+ * chain: `playerActive=false` unmounts <PlayerOverlay>, which owns the project's
+ * only `<svelte:window onkeydown>`, so F and Escape stop existing; meanwhile
+ * `playerFullscreen` stays true, which keeps `.app-shell.fullscreen .sidebar`
+ * hidden — and on macOS "fullscreen" is an undecorated maximised window. The
+ * result was a borderless window with no controls, no shortcuts and no sidebar,
+ * escapable only with Cmd+Q. Reached by pressing F on a Mega stream and having
+ * MEGAcmd die. `stopVideo()` already exits fullscreen for the same reason.
+ *
+ * Order matters: exit fullscreen BEFORE dropping `playerActive`, because the
+ * exit path must not depend on state this function is about to tear down.
+ */
 function reportLoadFailure(detail: string): void {
 	playbackError.set(detail);
+	exitFullscreen().catch((e) => log.warn('[player] Could not leave fullscreen:', e));
+	// The 60 s position tick would otherwise keep writing to SQLite for the rest
+	// of the session, against a file that is not playing.
+	stopPositionTimer();
+	currentResumeTarget = null;
 	playerActive.set(false);
 	if (isMacOS || isWindows) hideMpvOverlay().catch(() => {});
 	notify('error', get(t)['player.error.loadFailed'], { detail, persistent: true });
@@ -543,6 +590,11 @@ function retryWithFreshUrl(): boolean {
 	retriedItemPath = item.path;
 
 	log.warn('[player] Mega stream failed to open; re-resolving its WebDAV URL and retrying once');
+	// Until now this retry was completely silent: the picture froze for as long as
+	// MEGAcmd needed to come back and the user had no idea anything was being
+	// done. Transient, not persistent — if the retry works there is nothing left
+	// to act on, and if it fails reportLoadFailure() raises the persistent error.
+	notify('info', get(t)['player.error.streamExpired']);
 	invalidate(item.path);
 
 	void (async () => {
@@ -583,22 +635,23 @@ export async function destroyPlayer(): Promise<void> {
 	loadGeneration++;
 	for (const unsub of unsubscribeLangPrefs) unsub();
 	unsubscribeLangPrefs = [];
+	cancelPreopenTracking();
 	await destroy();
 	initialized = false;
 	playerActive.set(false);
 }
 
 /**
- * Load a video file from a URL (WebDAV or local path).
+ * Everything that must happen BEFORE mpv starts on a new file, shared by both
+ * routes into a new file: the cold `loadfile … replace` in loadVideo() and the
+ * warm `playlist-next` in advanceToPreopened().
+ *
+ * Splitting this out is not tidying: every line of it is a bug that was fixed
+ * once already (stale tracks, the outgoing file's position written under the
+ * incoming file's key, a leaked `start`), and the warm path would have
+ * reintroduced all of them by skipping loadVideo() entirely.
  */
-export async function loadVideo(url: string, title?: string): Promise<void> {
-	log.info('[player] loadVideo called:', { url, title, initialized, isMacOS, isWindows });
-
-	if (!initialized) {
-		log.info('[player] Not initialized, calling initPlayer...');
-		await initPlayer();
-	}
-
+async function prepareForNextFile(url: string): Promise<void> {
 	// Record where the OUTGOING file was before anything about it is reset.
 	// Auto-advance and "play the next episode" both come through here.
 	await persistPlaybackPosition();
@@ -629,6 +682,10 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 	playbackError.set(null);
 
 	// Demuxer/cache options must be in place before the demuxer is created.
+	// On the WARM path the demuxer for this file already exists (that is the
+	// point), so this write lands too late for it — which is exactly why
+	// shouldPreopenNext() refuses to pre-open across a profile change. Writing it
+	// anyway keeps the global state honest for whatever is loaded next.
 	await applyStreamProfile(url);
 
 	// Resume. `start` is applied by mpv while OPENING the file, so playback
@@ -645,18 +702,26 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 		log.warn('[player] Could not set the start position:', e);
 	}
 
-	log.info('[player] Sending loadfile command...');
-	try {
-		await command('loadfile', [url]);
-	} catch (e) {
-		log.error('[player] loadfile command FAILED:', e);
-		throw e;
-	}
-	log.info('[player] loadfile command succeeded');
-	startPositionTimer();
+	// Whatever mpv had queued belongs to the file we are leaving behind.
+	cancelPreopenTracking();
 
-	// Start paused so the user decides when to play
-	await setProperty('pause', 'yes');
+	// mpv's `sub-delay` is GLOBAL and `loadfile` does not reset it (the same trap
+	// `start` has, which is handled above). Without this, five taps of G on
+	// episode 1 silently carried -0.5 s into episode 2 while the panel and the OSD
+	// both showed 0 ms, and the next tap jumped from -500 ms to -100 ms.
+	try {
+		await setProperty('sub-delay', 0);
+	} catch (e) {
+		log.warn('[player] Could not reset the subtitle delay:', e);
+	}
+}
+
+/**
+ * Everything that must happen AFTER mpv has been pointed at a new file, shared
+ * by the cold and warm paths.
+ */
+async function commitCurrentFile(url: string, title?: string): Promise<void> {
+	startPositionTimer();
 
 	currentVideoUrl.set(url);
 	currentVideoTitle.set(title ?? null);
@@ -674,6 +739,40 @@ export async function loadVideo(url: string, title?: string): Promise<void> {
 	applyUserShaderPreset().catch((e) => {
 		log.warn('[player] Failed to apply shader preset:', e);
 	});
+}
+
+/**
+ * Load a video file from a URL (WebDAV or local path). The COLD path: mpv opens
+ * the stream from scratch, which over WebDAV costs three sequential HTTP round
+ * trips. Used for every user-initiated play, and as the fallback whenever the
+ * warm pre-open is not available.
+ *
+ * `loadfile … replace` also wipes mpv's other playlist entries (verified), so
+ * this path cannot inherit a stale pre-open.
+ */
+export async function loadVideo(url: string, title?: string): Promise<void> {
+	log.info('[player] loadVideo called:', { url, title, initialized, isMacOS, isWindows });
+
+	if (!initialized) {
+		log.info('[player] Not initialized, calling initPlayer...');
+		await initPlayer();
+	}
+
+	await prepareForNextFile(url);
+
+	log.info('[player] Sending loadfile command...');
+	try {
+		await command('loadfile', [url]);
+	} catch (e) {
+		log.error('[player] loadfile command FAILED:', e);
+		throw e;
+	}
+	log.info('[player] loadfile command succeeded');
+
+	// Start paused so the user decides when to play.
+	await setProperty('pause', 'yes');
+
+	await commitCurrentFile(url, title);
 }
 
 /**
@@ -748,6 +847,11 @@ export async function resizeMpvOverlay(x: number, y: number, width: number, heig
 export async function hideMpvOverlay(): Promise<void> {
 	if (!(isMacOS || isWindows)) return;
 	mpvWindowAttached = false;
+	// The pause below persists the position; after that the periodic tick has
+	// nothing left to do and would keep writing every 60 s for the rest of the
+	// session. startPositionTimer() is idempotent, so returning to the player
+	// re-arms it.
+	stopPositionTimer();
 	// Pause playback so audio doesn't keep going while the player view is hidden
 	// (e.g. when navigating to another section). Hiding the window alone does NOT
 	// stop mpv. Keeps the position so the user can resume on return.
@@ -810,6 +914,8 @@ export async function stopVideo(): Promise<void> {
 	demuxerCacheTime.set(null);
 	demuxerCacheDuration.set(null);
 	mediaTitle.set(null);
+	// `stop` empties mpv's playlist, so any pre-opened entry is gone with it.
+	cancelPreopenTracking();
 }
 
 // --- Playback controls ---
@@ -930,85 +1036,8 @@ export function getDefaultAdjustments(): VideoAdjustments {
  * from_node and are safe to pull.
  */
 
-/** Coerce mpv's loose booleans ("yes"/"no"/1/0/true) into a real boolean. */
-function asFlag(value: unknown): boolean {
-	if (typeof value === 'boolean') return value;
-	if (typeof value === 'number') return value !== 0;
-	if (typeof value === 'string') return value === 'yes' || value === 'true' || value === '1';
-	return false;
-}
-
-/** Non-empty string or undefined — mpv omits absent fields, and can send "". */
-function asOptionalString(value: unknown): string | undefined {
-	if (typeof value !== 'string') return undefined;
-	const trimmed = value.trim();
-	return trimmed.length > 0 ? trimmed : undefined;
-}
-
-/**
- * Parse an `aid`/`sid` value. mpv returns the literal "no" when the stream is
- * disabled and "auto" before a track has been picked, otherwise a track id
- * (which may arrive as a number or as a numeric string).
- */
-function parseTrackId(value: unknown): number | 'no' | null {
-	if (value == null) return null;
-	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-	if (typeof value === 'boolean') return value ? null : 'no';
-	if (typeof value === 'string') {
-		if (value === 'no' || value === 'false') return 'no';
-		if (value === 'auto' || value === '') return null;
-		const parsed = parseInt(value, 10);
-		return Number.isNaN(parsed) ? null : parsed;
-	}
-	return null;
-}
-
-/**
- * Defensive parser for mpv's `track-list`. Keys are kebab/snake-cased and most
- * fields are optional, so nothing here is assumed: entries without a usable
- * numeric `id` or a known `type` are dropped instead of producing junk tracks.
- */
-export function parseTrackList(raw: unknown): MediaTrack[] {
-	// The plugin normally hands over already-decoded JSON, but tolerate a string
-	// payload in case a transport ever passes the node through verbatim.
-	let value = raw;
-	if (typeof value === 'string') {
-		try {
-			value = JSON.parse(value);
-		} catch {
-			return [];
-		}
-	}
-	if (!Array.isArray(value)) return [];
-
-	const tracks: MediaTrack[] = [];
-	for (const entry of value) {
-		if (!entry || typeof entry !== 'object') continue;
-		const rec = entry as Record<string, unknown>;
-
-		const rawType = rec['type'];
-		if (rawType !== 'video' && rawType !== 'audio' && rawType !== 'sub') continue;
-
-		const rawId = rec['id'];
-		const id = typeof rawId === 'number' ? rawId : parseInt(String(rawId ?? ''), 10);
-		if (!Number.isFinite(id)) continue;
-
-		tracks.push({
-			id,
-			type: rawType,
-			title: asOptionalString(rec['title']),
-			lang: asOptionalString(rec['lang']),
-			codec: asOptionalString(rec['codec']),
-			selected: asFlag(rec['selected']),
-			// mpv sets `external: true` and fills `external-filename` for sub-add'ed
-			// or auto-loaded sidecar files; treat either as external.
-			external: asFlag(rec['external']) || asOptionalString(rec['external-filename']) !== undefined,
-			default: asFlag(rec['default']),
-			forced: asFlag(rec['forced']),
-		});
-	}
-	return tracks;
-}
+// Re-exported because parseTrackList used to be part of this module's surface.
+export { parseTrackList } from '$lib/utils/track-list';
 
 /** Parse a raw track-list payload into the stores. Returns the parsed tracks. */
 function applyTrackList(raw: unknown): MediaTrack[] {
@@ -1349,6 +1378,173 @@ export async function devSmokePlay(path: string): Promise<void> {
 	await setProperty('pause', 'no');
 	log.info('[player] smoke playback started:', path);
 }
+
+// --- Queue pre-open ----------------------------------------------------------
+//
+// Why this exists, and why it is shaped like this, is documented in full in
+// utils/preopen.ts (including the numbers). The short version: mpv's own
+// `prefetch-playlist` is the only thing that can hide the 6 s of three
+// sequential HTTP opens a Matroska stream costs, but it only prefetches entries
+// that are in MPV'S playlist — and our queue is a Svelte store.
+//
+// So we lend mpv exactly ONE entry, ~45 s before we need it, and then consume it
+// with `playlist-next`. mpv's playlist never holds more than two entries, our
+// `playlistIndex` stays the single source of truth for the queue, and every
+// existing path (auto-advance, resume, watched, error retry) keeps working.
+
+/** The entry currently sitting in mpv's playlist behind the one that is playing. */
+interface PreopenedEntry {
+	/** Index in OUR playlist. */
+	index: number;
+	/** The item, so a queue edit can be detected by identity. */
+	item: PlaylistItem;
+	/** The exact URL handed to mpv. Compared against a fresh resolve before use. */
+	url: string;
+}
+
+let preopened: PreopenedEntry | null = null;
+// Guards against re-entering the append while the previous one is still in
+// flight (the time-pos observer fires ~1/s, URL resolution can take longer).
+let preopenInFlight = false;
+
+/** Forget our bookkeeping. Does NOT touch mpv (the caller knows whether it must). */
+function cancelPreopenTracking(): void {
+	preopened = null;
+	preopenInFlight = false;
+}
+
+/**
+ * Drop any pre-opened entry from mpv's playlist as well.
+ *
+ * `playlist-clear` removes every entry EXCEPT the one playing, and playback
+ * carries on untouched (verified). Call this whenever the queue changes under
+ * us, so mpv can never advance into an item the user has removed or reordered.
+ */
+export async function cancelPreopen(): Promise<void> {
+	const had = preopened !== null;
+	cancelPreopenTracking();
+	if (!had || !initialized) return;
+	try {
+		await command('playlist-clear', []);
+		log.debug('[player] Pre-opened entry dropped from mpv\'s playlist');
+	} catch (e) {
+		log.warn('[player] Could not clear the mpv playlist:', e);
+	}
+}
+
+/**
+ * Called on every `time-pos` tick. Appends the next queue item to mpv's
+ * playlist once the playhead is within PREOPEN_LEAD_SECONDS of the end.
+ *
+ * Fire-and-forget and entirely best effort: anything that goes wrong here just
+ * means the next episode starts the slow way, which is what happens today.
+ */
+function maybePreopenNext(position: number | null): void {
+	if (!initialized || preopenInFlight || !get(playerActive)) return;
+
+	const items = get(playlist);
+	const index = get(playlistIndex);
+	const next = items[index + 1];
+	const currentUrl = get(currentVideoUrl);
+	if (!next || !currentUrl) return;
+
+	// The profile gate. `next.source === 'local'` means mpv will be handed a bare
+	// path, i.e. the local profile; anything else is a WebDAV URL. Comparing that
+	// against the CURRENT url's remoteness is what keeps us from opening a stream
+	// with the cache switched off (see PreopenInput.sameStreamProfile).
+	const sameStreamProfile = isRemoteUrl(currentUrl) === (next.source !== 'local');
+
+	if (
+		!shouldPreopenNext({
+			position,
+			duration: get(duration),
+			index,
+			length: items.length,
+			sameStreamProfile,
+			alreadyArmed: preopened?.index === index + 1,
+		})
+	) {
+		return;
+	}
+
+	preopenInFlight = true;
+	void (async () => {
+		try {
+			// For a Mega item this is normally a cache hit put there by
+			// prefetchAround(); it still re-checks the MEGAcmd generation token, so
+			// a URL we are about to freeze into mpv's playlist is at least known
+			// good as of this moment.
+			const url = await resolvePlayableUrl(next);
+			// The queue may have moved while we were resolving.
+			if (get(playlistIndex) !== index || get(playlist)[index + 1] !== next) return;
+			await command('loadfile', [url, 'append']);
+			preopened = { index: index + 1, item: next, url };
+			log.info(
+				`[player] Pre-opened queue item ${index + 1} ("${next.name}") ` +
+					`${PREOPEN_LEAD_SECONDS}s ahead; mpv is opening its demuxer now`
+			);
+		} catch (e) {
+			log.warn('[player] Could not pre-open the next queue item:', e);
+		} finally {
+			preopenInFlight = false;
+		}
+	})();
+}
+
+/**
+ * Advance to an already pre-opened next item, reusing mpv's warm demuxer.
+ * Returns false if there is nothing usable, in which case the caller must fall
+ * back to the cold loadVideo() path.
+ *
+ * The URL check is the safety net for an expired WebDAV link: resolvePlayableUrl
+ * consults the MEGAcmd generation token, so if the server restarted during the
+ * ~45 s the entry sat in mpv's playlist, the fresh URL differs from the frozen
+ * one and we take the cold path with the good URL instead of playing into a
+ * dead socket.
+ */
+async function advanceToPreopened(index: number, item: PlaylistItem): Promise<boolean> {
+	const armed = preopened;
+	if (!armed || armed.index !== index || armed.item !== item) return false;
+
+	try {
+		const fresh = await resolvePlayableUrl(item);
+		if (fresh !== armed.url) {
+			log.warn('[player] The pre-opened URL went stale; falling back to a cold load');
+			await cancelPreopen();
+			return false;
+		}
+		// `playlist-next` STOPS playback if there is nothing after the current
+		// entry and still reports success (verified), so never issue it on a guess:
+		// confirm mpv really is holding the second entry.
+		const count = await getProperty('playlist-count', 'int64');
+		if (typeof count !== 'number' || count < 2) {
+			log.warn(`[player] mpv no longer holds the pre-opened entry (count=${count}); cold load`);
+			cancelPreopenTracking();
+			return false;
+		}
+
+		await prepareForNextFile(armed.url);
+		await command('playlist-next', ['force']);
+		// Drop the entry we just left, so mpv's playlist is back to a single entry
+		// and the next pre-open starts from a known shape. Without this it grows by
+		// one per episode and `playlist-count >= 2` above stops meaning anything.
+		// Verified safe immediately after playlist-next: playback is unaffected
+		// (playlist-clear never touches the entry that is playing).
+		try {
+			await command('playlist-clear', []);
+		} catch (e) {
+			log.warn('[player] Could not tidy the mpv playlist after advancing:', e);
+		}
+		await commitCurrentFile(armed.url, item.name);
+		log.info(`[player] Advanced to the pre-opened item "${item.name}" (warm demuxer)`);
+		return true;
+	} catch (e) {
+		log.warn('[player] Warm advance failed; falling back to a cold load:', e);
+		cancelPreopenTracking();
+		return false;
+	}
+}
+
 // --- Playlist navigation ---
 
 let autoAdvancing = false;
@@ -1363,8 +1559,13 @@ export async function playNext(): Promise<boolean> {
 	playlistIndex.set(nextIdx);
 
 	try {
-		const url = await resolvePlayableUrl(item);
-		await loadVideo(url, item.name);
+		// Warm path first: if this item is the one mpv has already opened, moving to
+		// it is effectively instant (0.01 s measured) instead of a cold three-round-
+		// trip open. Falls through to the cold path on any doubt.
+		if (!(await advanceToPreopened(nextIdx, item))) {
+			const url = await resolvePlayableUrl(item);
+			await loadVideo(url, item.name);
+		}
 		await setProperty('pause', 'no');
 		prefetchAround(nextIdx);
 		// Must go through toDbKey: a bare path is read back as a Mega path, which

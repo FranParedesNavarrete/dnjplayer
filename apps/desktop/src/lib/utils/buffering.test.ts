@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { computeBufferedSeconds, computeIsLoading } from './buffering';
+import {
+	computeBufferedSeconds,
+	computeIsLoading,
+	stepSpinner,
+	IDLE_SPINNER,
+	SPINNER_GRACE_MS,
+} from './buffering';
 
 describe('computeBufferedSeconds', () => {
 	it('prefers the absolute cache time, relative to the playhead', () => {
@@ -69,5 +75,91 @@ describe('computeIsLoading', () => {
 
 	it('is false when idle at EOF (keep-open=yes parks mpv there unpaused)', () => {
 		expect(computeIsLoading({ ...playing, coreIdle: true, eofReached: true })).toBe(false);
+	});
+});
+
+describe('stepSpinner', () => {
+	const T = { graceMs: 300, minVisibleMs: 400 };
+
+	it('stays hidden while nothing is busy', () => {
+		const step = stepSpinner(IDLE_SPINNER, false, 1000, T);
+		expect(step.state.visible).toBe(false);
+		expect(step.recheckInMs).toBeNull();
+	});
+
+	it('does NOT show immediately on the rising edge, and asks to be re-checked', () => {
+		const step = stepSpinner(IDLE_SPINNER, true, 1000, T);
+		expect(step.state.visible).toBe(false);
+		expect(step.state.busySince).toBe(1000);
+		expect(step.recheckInMs).toBe(300);
+	});
+
+	it('shrinks the re-check as the grace window elapses', () => {
+		const a = stepSpinner(IDLE_SPINNER, true, 1000, T);
+		const b = stepSpinner(a.state, true, 1120, T);
+		expect(b.state.visible).toBe(false);
+		expect(b.recheckInMs).toBe(180);
+	});
+
+	it('shows once busy has persisted for the grace delay', () => {
+		const a = stepSpinner(IDLE_SPINNER, true, 1000, T);
+		const b = stepSpinner(a.state, true, 1300, T);
+		expect(b.state.visible).toBe(true);
+		expect(b.state.shownAt).toBe(1300);
+		expect(b.recheckInMs).toBeNull();
+	});
+
+	// The reason the grace delay exists: a WebDAV top-up blip must not strobe.
+	it('swallows a stall shorter than the grace delay entirely', () => {
+		const a = stepSpinner(IDLE_SPINNER, true, 1000, T);
+		const b = stepSpinner(a.state, true, 1100, T);
+		const c = stepSpinner(b.state, false, 1150, T);
+		expect(b.state.visible).toBe(false);
+		expect(c.state.visible).toBe(false);
+		expect(c.state).toEqual(IDLE_SPINNER);
+		expect(c.recheckInMs).toBeNull();
+	});
+
+	it('restarts the grace window after an abandoned stall', () => {
+		const a = stepSpinner(IDLE_SPINNER, true, 1000, T);
+		const cleared = stepSpinner(a.state, false, 1100, T);
+		const again = stepSpinner(cleared.state, true, 1200, T);
+		// Not 1000: the earlier partial wait must not count towards this one, or
+		// two short unrelated blips would add up into a visible flash.
+		expect(again.state.busySince).toBe(1200);
+		expect(again.state.visible).toBe(false);
+	});
+
+	it('holds the spinner for the minimum visible time after busy clears', () => {
+		const shown = stepSpinner(
+			{ visible: true, busySince: 1000, shownAt: 1300 },
+			false,
+			1400,
+			T
+		);
+		expect(shown.state.visible).toBe(true);
+		expect(shown.recheckInMs).toBe(300);
+	});
+
+	it('hides once the minimum visible time has passed', () => {
+		const step = stepSpinner({ visible: true, busySince: 1000, shownAt: 1300 }, false, 1700, T);
+		expect(step.state).toEqual(IDLE_SPINNER);
+		expect(step.recheckInMs).toBeNull();
+	});
+
+	it('keeps an already visible spinner up with no new grace period', () => {
+		const step = stepSpinner({ visible: true, busySince: null, shownAt: 1300 }, true, 5000, T);
+		expect(step.state.visible).toBe(true);
+		// The original shownAt survives, so the minimum-visible clock is not reset
+		// by every re-stall.
+		expect(step.state.shownAt).toBe(1300);
+		expect(step.recheckInMs).toBeNull();
+	});
+
+	it('uses the real defaults when no timings are passed', () => {
+		const a = stepSpinner(IDLE_SPINNER, true, 0);
+		expect(a.recheckInMs).toBe(SPINNER_GRACE_MS);
+		expect(stepSpinner(a.state, true, SPINNER_GRACE_MS - 1).state.visible).toBe(false);
+		expect(stepSpinner(a.state, true, SPINNER_GRACE_MS).state.visible).toBe(true);
 	});
 });

@@ -5,9 +5,11 @@
 	import { t } from '$lib/i18n';
 
 	let {
-		// Seconds of media already buffered, counted from the start of the file.
-		// Phase 3 will feed this from mpv's `demuxer-cache-time`; until then the
-		// "loaded up to here" layer simply doesn't render.
+		// ABSOLUTE timeline position, in seconds, up to which media is buffered —
+		// i.e. where the faint "loaded" segment ends. Fed from the `bufferedUntil`
+		// store, which derives it from mpv's `demuxer-cache-time`. Null (or 0)
+		// while nothing is known, and the layer then simply doesn't render, so it
+		// can never lie about progress.
 		bufferedSeconds = null,
 		// Bound by the overlay: a drag in progress must cancel the auto-hide timer.
 		scrubbing = $bindable(false),
@@ -131,8 +133,11 @@
 		onkeydown={handleKeydown}
 	>
 		<div class="seek-rail">
-			<!-- "Loaded up to here" layer. Renders only once a buffer length is
-			     known, so it can't lie about progress while Phase 3 is pending. -->
+			<!-- "Loaded up to here": a faint segment running from the start of the
+			     file to the end of mpv's demuxer cache, so the part past the
+			     playhead reads as "already downloaded". Painted BEFORE .seek-played
+			     so the progress bar covers the stretch behind the playhead and only
+			     the lead is visible. Renders only once a buffer extent is known. -->
 			{#if bufferedFraction > 0}
 				<div class="seek-buffered" style="width: {bufferedFraction * 100}%"></div>
 			{/if}

@@ -49,6 +49,19 @@ let prefetchGeneration = 0;
 // null = nothing cached yet / not asked yet.
 let cachedServerGeneration: number | null = null;
 
+// Bumped by every cache invalidation — a server restart, a targeted invalidate(),
+// or a full clear. A resolution that was ALREADY IN FLIGHT when the cache was
+// wiped must not write its (now dead) URL back in afterwards, which is exactly
+// what happened: invalidateOnServerRestart() cleared `urlCache` but not
+// `inFlight`, and the pending promise's `.then` re-inserted its URL a moment
+// later. Worse, resolvePlayableUrl() consults `inFlight` right after the cache,
+// so callers were handed that dead promise directly — including the
+// "retry with a fresh URL" path, which would retry with the same dead URL.
+//
+// Same token pattern as `loadGeneration` in player-service.ts: each resolution
+// remembers the generation it started under and stays quiet if it has moved on.
+let cacheGeneration = 0;
+
 /**
  * Drop every cached URL if the MEGAcmd server has restarted since they were
  * resolved. Best-effort: if the token can't be read (command missing, IPC
@@ -66,11 +79,16 @@ async function invalidateOnServerRestart(): Promise<void> {
 
 	if (cachedServerGeneration !== null && generation !== cachedServerGeneration) {
 		log.info(
-			`[prefetch] MEGAcmd restarted (generation ${cachedServerGeneration} -> ${generation}); dropping ${urlCache.size} cached WebDAV URL(s)`
+			`[prefetch] MEGAcmd restarted (generation ${cachedServerGeneration} -> ${generation}); dropping ${urlCache.size} cached WebDAV URL(s) and ${inFlight.size} in-flight resolution(s)`
 		);
 		urlCache.clear();
-		// In-flight resolutions were issued against the new server (the command
-		// ensures the server is up first), so they are left alone.
+		// In-flight resolutions may have been issued against the server that just
+		// died, so they are dropped too and their results refused by the token
+		// check below. A caller awaiting one still gets its value (the promise is
+		// not cancellable) — it simply never becomes a cache entry, and the next
+		// caller resolves afresh against the server that is actually running.
+		inFlight.clear();
+		cacheGeneration++;
 	}
 	cachedServerGeneration = generation;
 }
@@ -96,9 +114,15 @@ export async function resolvePlayableUrl(item: PlaylistItem): Promise<string> {
 	const pending = inFlight.get(remotePath);
 	if (pending) return pending;
 
+	const startedAt = cacheGeneration;
 	const promise = megaGetWebdavUrl(remotePath)
 		.then((url) => {
-			urlCache.set(remotePath, url);
+			// Only cache it if nothing invalidated the cache while we were resolving.
+			if (startedAt === cacheGeneration) {
+				urlCache.set(remotePath, url);
+			} else {
+				log.debug(`[prefetch] Discarding a stale resolution for ${remotePath}`);
+			}
 			return url;
 		})
 		.catch((e) => {
@@ -107,7 +131,9 @@ export async function resolvePlayableUrl(item: PlaylistItem): Promise<string> {
 			throw e;
 		})
 		.finally(() => {
-			inFlight.delete(remotePath);
+			// Only withdraw OUR entry: an invalidation may already have cleared the
+			// map and a newer resolution for the same path may be registered there.
+			if (inFlight.get(remotePath) === promise) inFlight.delete(remotePath);
 		});
 
 	inFlight.set(remotePath, promise);
@@ -153,14 +179,21 @@ export function prefetchAround(currentIndex: number): void {
 /**
  * Drop a single cached entry (on prefetch failure or item removal).
  * Takes the cache key, i.e. the Mega remote path. Harmless no-op for local paths.
+ *
+ * Drops the in-flight resolution too, and bumps the generation so that
+ * resolution cannot write its result back in. Without that, "retry with a fresh
+ * URL" could be handed the very URL it had just invalidated.
  */
 export function invalidate(remotePath: string): void {
 	urlCache.delete(remotePath);
+	inFlight.delete(remotePath);
+	cacheGeneration++;
 }
 
 /** Clear the entire cache and cancel any in-progress prefetch batch. */
 export function clearPrefetchCache(): void {
 	prefetchGeneration++;
+	cacheGeneration++;
 	urlCache.clear();
 	inFlight.clear();
 	// Keep `cachedServerGeneration`: it describes which server we last talked to,

@@ -79,3 +79,108 @@ export function computeIsLoading(state: {
 	if (state.pausedForCache) return true;
 	return state.coreIdle && !state.paused && !state.eofReached;
 }
+
+// --- Spinner visibility, with hysteresis at both ends -----------------------
+//
+// `isBuffering`/`isLoading` flip far too fast to drive a spinner directly. Over
+// a MEGAcmd WebDAV stream `paused-for-cache` routinely blips for 50-150 ms while
+// the demuxer tops up, and every file transition makes `duration` null for a
+// frame or two. Wiring either straight to the DOM gives a strobe light.
+//
+// So the raw "busy" flag goes through a two-sided delay:
+//
+//   graceMs       how long busy must persist BEFORE the spinner appears. A
+//                 stall shorter than this is invisible to the user, which is
+//                 the point — it was invisible in the video too.
+//   minVisibleMs  how long the spinner stays once shown, even if busy clears
+//                 immediately. Without it, a stall just over `graceMs` draws a
+//                 one-frame flash, which reads as a glitch rather than as
+//                 information.
+//
+// This is a pure step function rather than a pile of timers in the component:
+// it takes the previous state and "now", and returns the next state plus how
+// many ms later it wants to be called again (null = nothing pending). The
+// component only has to own one setTimeout.
+
+/** Delay before a stall becomes a visible spinner. */
+export const SPINNER_GRACE_MS = 300;
+/** Minimum time the spinner stays on screen once it has appeared. */
+export const SPINNER_MIN_VISIBLE_MS = 400;
+
+export interface SpinnerTimings {
+	graceMs: number;
+	minVisibleMs: number;
+}
+
+export const DEFAULT_SPINNER_TIMINGS: SpinnerTimings = {
+	graceMs: SPINNER_GRACE_MS,
+	minVisibleMs: SPINNER_MIN_VISIBLE_MS,
+};
+
+export interface SpinnerState {
+	/** Whether the spinner should be painted right now. */
+	visible: boolean;
+	/** Timestamp of the rising edge of the current busy period, if any. */
+	busySince: number | null;
+	/** Timestamp at which the spinner became visible, if it is. */
+	shownAt: number | null;
+}
+
+/** The at-rest state: nothing busy, nothing shown. */
+export const IDLE_SPINNER: SpinnerState = { visible: false, busySince: null, shownAt: null };
+
+export interface SpinnerStep {
+	state: SpinnerState;
+	/** ms until this function should be called again, or null if nothing is pending. */
+	recheckInMs: number | null;
+}
+
+/**
+ * Advance the spinner state machine.
+ *
+ * @param prev  the state returned by the previous call (start from IDLE_SPINNER)
+ * @param busy  the raw predicate — `playerActive && (isBuffering || isLoading)`
+ * @param now   a monotonic-ish millisecond clock (`Date.now()` is fine)
+ */
+export function stepSpinner(
+	prev: SpinnerState,
+	busy: boolean,
+	now: number,
+	timings: SpinnerTimings = DEFAULT_SPINNER_TIMINGS
+): SpinnerStep {
+	if (busy) {
+		// Already on screen: stay on, and stop asking to be re-checked. `shownAt`
+		// is preserved so a later release still honours the minimum visible time.
+		if (prev.visible) {
+			return {
+				state: { visible: true, busySince: prev.busySince ?? now, shownAt: prev.shownAt ?? now },
+				recheckInMs: null,
+			};
+		}
+		const busySince = prev.busySince ?? now;
+		const waited = now - busySince;
+		if (waited >= timings.graceMs) {
+			return { state: { visible: true, busySince, shownAt: now }, recheckInMs: null };
+		}
+		// Still inside the grace window: keep waiting, and say exactly when the
+		// caller should look again so no polling loop is needed.
+		return {
+			state: { visible: false, busySince, shownAt: null },
+			recheckInMs: timings.graceMs - waited,
+		};
+	}
+
+	// Not busy. A pending-but-never-shown grace period is simply abandoned, which
+	// is the whole point: the stall was too short to be worth reporting.
+	if (!prev.visible) return { state: IDLE_SPINNER, recheckInMs: null };
+
+	const shownFor = now - (prev.shownAt ?? now);
+	if (shownFor >= timings.minVisibleMs) return { state: IDLE_SPINNER, recheckInMs: null };
+	// Hold it a little longer. `busySince` is cleared: if busy returns while the
+	// spinner is still up, the `prev.visible` branch above keeps it up with no
+	// new grace period, which is what "it never really recovered" should look like.
+	return {
+		state: { visible: true, busySince: null, shownAt: prev.shownAt },
+		recheckInMs: timings.minVisibleMs - shownFor,
+	};
+}

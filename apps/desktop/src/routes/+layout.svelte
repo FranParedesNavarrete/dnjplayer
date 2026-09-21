@@ -71,6 +71,12 @@
 	<title>dnjplayer</title>
 </svelte:head>
 
+<!-- App-wide toasts. Mounted OUTSIDE `.app-shell`, not inside it: `position: fixed`
+     does not rescue an element whose ancestor is `display: none`, and
+     `.app-shell.fullscreen .sidebar` hides its whole subtree — which is exactly the
+     state where the only toast we raise (a playback failure) matters most. -->
+<ToastHost />
+
 <div class="app-shell" class:fullscreen={$playerFullscreen}>
 	<nav class="sidebar" class:collapsed={collapsed}>
 		<div class="sidebar-header">
@@ -121,8 +127,6 @@
 						<span class="status-text">{$t['status.notConnected']}</span>
 					{/if}
 				{/if}
-	<!-- App-wide toasts (fixed, top centre). Outside the fullscreen branch so errors show everywhere. -->
-	<ToastHost />
 			</div>
 		</div>
 	</nav>

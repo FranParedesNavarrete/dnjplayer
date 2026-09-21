@@ -94,8 +94,10 @@ export const es: Record<string, string> = {
 	'player.speed': 'Velocidad de reproducción',
 	'player.speedHint': 'Mantén Espacio para ir a 2x mientras lo pulsas',
 	'player.subtitleDelay': 'Retardo de subtítulos (G/H)',
+	'player.buffering': 'Almacenando en búfer…',
 	'player.error.loadFailed': 'No se ha podido reproducir el vídeo',
 	'player.error.detail': 'Detalles',
+	'player.error.streamExpired': 'El enlace ha caducado; reconectando…',
 
 	// Notifications (ToastHost)
 	'notify.dismiss': 'Cerrar',
