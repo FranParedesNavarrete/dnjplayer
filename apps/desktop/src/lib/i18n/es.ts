@@ -87,6 +87,12 @@ export const es: Record<string, string> = {
 	'player.loadSubtitles': 'Cargar subtítulos…',
 	'player.trackUnnamed': 'Pista {n}',
 	'player.noTracks': 'No hay pistas alternativas',
+	'player.error.loadFailed': 'No se ha podido reproducir el vídeo',
+	'player.error.detail': 'Detalles',
+
+	// Notifications (ToastHost)
+	'notify.dismiss': 'Cerrar',
+	'notify.hideDetails': 'Ocultar detalles',
 
 	// Pagina Cola
 	'queue.title': 'Cola',

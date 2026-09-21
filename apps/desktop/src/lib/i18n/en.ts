@@ -87,6 +87,12 @@ export const en: Record<string, string> = {
 	'player.loadSubtitles': 'Load subtitle file…',
 	'player.trackUnnamed': 'Track {n}',
 	'player.noTracks': 'No alternative tracks available',
+	'player.error.loadFailed': 'Could not play this video',
+	'player.error.detail': 'Details',
+
+	// Notifications (ToastHost)
+	'notify.dismiss': 'Dismiss',
+	'notify.hideDetails': 'Hide details',
 
 	// Queue page
 	'queue.title': 'Queue',
