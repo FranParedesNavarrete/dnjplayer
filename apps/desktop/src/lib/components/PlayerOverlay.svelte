@@ -518,6 +518,20 @@
 {/if}
 
 <div class="player-overlay" class:over={chromeOverVideo} class:hidden={!$controlsVisible}>
+	<!-- No scrim over the video, deliberately. Every way of fading a dark gradient
+	     drew a hard 1px dark hairline across the picture where the ramp reached
+	     alpha 0: as a background on the chrome rows, as background layers on a
+	     pseudo-element, on plain fixed-height boxes, and finally as a mask over a
+	     flat black fill — a different rasteriser, same line. The line followed the
+	     ramp's terminus, and leaving the box edge unpainted did not help. Under
+	     this compositing path (a transparent webview over mpv's own NSWindow) a
+	     gradient ramping to full transparency is not usable, so legibility is
+	     carried per element instead. See the shadow rules in the styles below:
+	     they are WIDE and soft on purpose. A tight, offset, high-alpha shadow
+	     draws a crisp dark outline that reads as a double edge on the glyphs —
+	     that was tried and rejected. Shadows fade to zero well inside their own
+	     paint area, so unlike a gradient none of them has an edge to seam. -->
+
 	<!-- Top layer: back, title, room for future actions on the right. -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
@@ -720,7 +734,6 @@
 		font-size: 0.82rem;
 		font-weight: 500;
 		letter-spacing: 0.01em;
-		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 		animation: buffering-in 0.18s ease-out;
 	}
 
@@ -789,11 +802,23 @@
 	.player-overlay.over {
 		--ov-text: #fff;
 		--ov-text-dim: rgba(255, 255, 255, 0.72);
-		--ov-rail: rgba(255, 255, 255, 0.28);
-		--ov-rail-buffered: rgba(255, 255, 255, 0.45);
-		--ov-chip: rgba(255, 255, 255, 0.14);
-		--ov-chip-hover: rgba(255, 255, 255, 0.26);
-		--ov-chip-border: rgba(255, 255, 255, 0.18);
+		/* These were calibrated to sit under a dark scrim. With the scrim gone they
+		   have to hold their own against a white frame, which the anime supplies
+		   constantly, so the chips went from white-on-white (invisible over a
+		   bright shot) to a dark translucent pill. Flat colours, no gradient —
+		   nothing here can bring the hairline back.
+		   The unplayed track is DARK, not translucent white. White at 0.45 with
+		   the buffered part at 0.68 left the two almost indistinguishable over a
+		   bright frame, and raising the buffered value cannot fix it: the ceiling
+		   is opaque white and the track was already near it. A dark track gives
+		   the three levels room to separate — dark track, white buffered, accent
+		   played — and it is the one choice that reads on a bright shot and a dark
+		   one alike, which is why every player that has no scrim does this. */
+		--ov-rail: rgba(0, 0, 0, 0.45);
+		--ov-rail-buffered: rgba(255, 255, 255, 0.72);
+		--ov-chip: rgba(0, 0, 0, 0.45);
+		--ov-chip-hover: rgba(0, 0, 0, 0.62);
+		--ov-chip-border: rgba(255, 255, 255, 0.22);
 		--ov-panel-bg: rgba(16, 18, 22, 0.92);
 
 		/* macOS: the DOM paints above the video, so the chrome floats on it.
@@ -816,25 +841,33 @@
 		pointer-events: auto;
 	}
 
-	/* Vertical gradients instead of opaque bars: the text stays legible over any
-	   frame while the video remains visible edge to edge. */
+	/* Legibility over bare video, and the blur radius is the whole game here.
+	   These strokes and glyphs are about 2px wide, so a shadow blurred over a
+	   comparable distance piles up on itself right next to the stroke and reads
+	   as a black outline rather than as shade — that is what 5px at 0.6 did, and
+	   2px at 0.9 before it. The blur has to be several times the stroke width,
+	   with the alpha dropped to match, so the same total darkness is spread into
+	   a haze with no edge anywhere in it. */
+	.player-overlay.over .chrome-top,
+	.player-overlay.over .chrome-bottom {
+		background: none;
+		position: relative;
+		z-index: 1;
+	}
+
+	/* No shadow on the icons or the sliders, and this is the conclusion of several
+	   attempts rather than an omission. A drop-shadow blurred over any distance
+	   comparable to a 2px icon stroke or a 4px rail piles up next to it and reads
+	   as a black contour; blurring it wide enough to stop doing that leaves it too
+	   faint to earn its keep. On the button it was worse still, because `filter`
+	   shadows the background box too, so the hover pill got a hard dark outline.
+	   Contrast over a bright frame comes from flat colour instead — see the raised
+	   rails and the dark chips in the `over` palette above. */
 	.player-overlay.over .chrome-top {
-		background: linear-gradient(
-			to bottom,
-			rgba(0, 0, 0, 0.75) 0%,
-			rgba(0, 0, 0, 0.45) 45%,
-			rgba(0, 0, 0, 0) 100%
-		);
 		padding: 14px 18px 44px;
 	}
 
 	.player-overlay.over .chrome-bottom {
-		background: linear-gradient(
-			to top,
-			rgba(0, 0, 0, 0.85) 0%,
-			rgba(0, 0, 0, 0.55) 45%,
-			rgba(0, 0, 0, 0) 100%
-		);
 		padding: 60px 18px 16px;
 	}
 
@@ -892,10 +925,6 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		min-width: 0;
-	}
-
-	.player-overlay.over .video-title {
-		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 	}
 
 	.action-row {

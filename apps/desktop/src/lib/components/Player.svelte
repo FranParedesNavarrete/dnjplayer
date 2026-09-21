@@ -301,6 +301,15 @@
 	   double as rounded corners for the video. */
 	:global(html.video-hole) .video-area.has-video {
 		box-shadow: 0 0 0 200vmax var(--bg-primary);
+		/* Bottom-right ONLY. The other three corners butt against app chrome — the
+		   sidebar on the left, the title bar above — so a radius there just bites
+		   a notch out of the picture against something that is already square.
+		   Bottom-right is the one corner with nothing next to it. The base
+		   `8px 8px 0 0` dates from when the controls sat in a bar BELOW the video
+		   and that bar owned the bottom corners; it still does in 'below' mode,
+		   which is why this is scoped to the video-hole case. The shadow above
+		   follows this radius, and that is what actually rounds the hole. */
+		border-radius: 0 0 8px 0;
 	}
 
 	.video-area:not(.has-video) {

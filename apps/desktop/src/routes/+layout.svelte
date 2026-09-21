@@ -130,7 +130,7 @@
 			</div>
 		</div>
 	</nav>
-	<main class="content">
+	<main class="content" class:flush={$page.url.pathname === '/player'}>
 		<!-- Positioned + z-index so the banner paints ABOVE the video-hole backdrop
 		     (`.video-area`'s box-shadow in Player.svelte), which is painted from a
 		     positioned ancestor later in tree order and would otherwise cover it. -->
@@ -315,6 +315,14 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: var(--page-pad);
+	}
+
+	/* The player page is edge to edge: it draws its own chrome OVER the video, so
+	   page padding only creates a frame around it. That frame is not merely ugly —
+	   while `html.video-hole` is active every ancestor is transparent, so the
+	   padding band is a see-through hole onto whatever is behind the window. */
+	.content.flush {
+		padding: 0;
 	}
 
 	.banner-slot {

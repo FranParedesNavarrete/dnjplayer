@@ -25,15 +25,14 @@
 </div>
 
 <style>
+	/* Full viewport height, not `100vh - 48px`: the layout gives the player page
+	   no chrome of its own to subtract, and the 48px guess left a strip below the
+	   video. With the video hole active that strip is TRANSPARENT, so it showed
+	   whatever was behind the window instead of just being empty. Fullscreen needs
+	   no override now that windowed already fills the viewport. */
 	.player-page {
-		height: calc(100vh - 48px);
+		height: 100vh;
 		display: flex;
 		flex-direction: column;
-	}
-
-	/* In immersive fullscreen the sidebar/padding are hidden by the layout, so
-	   the player fills the entire viewport (the video surface tracks the video area). */
-	.player-page.fullscreen {
-		height: 100vh;
 	}
 </style>
