@@ -472,6 +472,11 @@ async function doInitPlayer(): Promise<void> {
 					const stalled = asFlag(data);
 					if (stalled && cacheStallStartedAt === null) {
 						cacheStallStartedAt = Date.now();
+						// BOTH edges. Logging only the falling one was a mistake: with a
+						// stuck badge the log could not tell "the cache never stalled"
+						// apart from "it stalled and never recovered", which is exactly
+						// the question that mattered.
+						log.info('[player] cache stall started');
 					} else if (!stalled && cacheStallStartedAt !== null) {
 						log.info(`[player] cache stall lasted ${Date.now() - cacheStallStartedAt}ms`);
 						cacheStallStartedAt = null;

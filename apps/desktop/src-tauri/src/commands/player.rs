@@ -458,6 +458,35 @@ fn do_resize_mpv_macos(
     let w = ((x + width).ceil() - left).max(1.0);
     let h = ((y + height).ceil() - top).max(1.0);
 
+    // Immersive full screen: mpv owns the WHOLE screen, not the DOM rect.
+    //
+    // The conversion below goes through `contentLayoutRect`, which excludes the
+    // title bar's band, and the title bar still occupies layout while immersive
+    // even though it is invisible — so the page, and with it the surface, starts
+    // ~28pt down. That strip had no document and no surface behind it, and through
+    // a transparent window it showed the user's DESKTOP. It is unreachable from
+    // CSS, there being no document there. Giving mpv the screen fills it with
+    // mpv's own black, which is also what makes full screen read as a cinema
+    // instead of a very large window. The video keeps its aspect ratio either way;
+    // mpv letterboxes inside whatever frame it is given.
+    {
+        use tauri::Manager;
+        let immersive = *app
+            .state::<crate::commands::fullscreen::ImmersiveState>()
+            .active
+            .lock()
+            .map_err(|e| e.to_string())?;
+        if immersive {
+            if let Some(screen) = tauri_ns_window.screen() {
+                mpv_window.setFrame_display(screen.frame(), true);
+                if mpv_window.alphaValue() < 1.0 {
+                    mpv_window.setAlphaValue(1.0);
+                }
+                return Ok(());
+            }
+        }
+    }
+
     let viewport = tauri_ns_window.contentLayoutRect();
     let in_window = NSRect::new(
         NSPoint::new(

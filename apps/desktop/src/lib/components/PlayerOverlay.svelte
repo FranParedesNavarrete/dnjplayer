@@ -77,6 +77,7 @@
 		X,
 	} from 'lucide-svelte';
 	import { t } from '$lib/i18n';
+	import { log } from '$lib/log';
 	import { Loader2 } from 'lucide-svelte';
 	import { stepSpinner, IDLE_SPINNER, type SpinnerState } from '$lib/utils/buffering';
 	import { digitShortcut, isDigitRowKey, type DigitAction } from '$lib/utils/shortcuts';
@@ -107,6 +108,23 @@
 	// is worse than no setting at all. AUTO_HIDE_MS is only the fallback for a
 	// missing/invalid stored value; 0 still means "never hide".
 	let hideDelay = $derived($controlsHideDelay ?? AUTO_HIDE_MS);
+
+	// A geometry change can leave the hover flags lying: they are driven by
+	// `pointerenter`/`pointerleave` on the chrome rows, and those only fire when
+	// the POINTER moves. Entering or leaving full screen resizes the window under
+	// a stationary pointer, so a chrome row can slide out from under the cursor
+	// without ever sending `pointerleave` — the flag stays true, `canAutoHide`
+	// stays false, and the chrome never hides again for the rest of the session.
+	// That is the reported "in full screen the title and the buttons don't hide".
+	//
+	// Clearing both on every full-screen transition is safe: if the pointer really
+	// is over a row afterwards, the next mouse move re-enters it and re-arms the
+	// flag, and until then the auto-hide countdown is exactly what we want running.
+	$effect(() => {
+		$playerFullscreen; // track transitions
+		pointerInTop = false;
+		pointerInBottom = false;
+	});
 
 	// Nuvio's desktop predicate (`canAutoHideChrome`, controls.js:2103): visible,
 	// not scrubbing, pointer not over the chrome, no modal open, no visible error.
@@ -139,7 +157,17 @@
 		// Deliberately the effect's ONLY reactive dependency: everything it needs
 		// is encoded in the key, so nothing else can re-trigger the countdown.
 		const [hideable, visible, delay] = autoHideKey.split(':');
-		if (hideable !== '1' || visible !== '1') return;
+		if (hideable !== '1' || visible !== '1') {
+			// Which term blocked it. "The chrome never hides" is otherwise
+			// indistinguishable between six causes, and one of them is a user
+			// setting that is doing exactly what it was asked to.
+			log.debug(
+				`[player] chrome stays up: active=${$playerActive} delay=${hideDelay} ` +
+					`scrubbing=${scrubbing} inTop=${pointerInTop} inBottom=${pointerInBottom} ` +
+					`pinned=${$controlsPinned} error=${!!$playbackError} visible=${$controlsVisible}`,
+			);
+			return;
+		}
 		const timer = setTimeout(() => controlsVisible.set(false), Number(delay));
 		return () => clearTimeout(timer);
 	});
@@ -240,16 +268,29 @@
 	// The grace/minimum-visible hysteresis lives in utils/buffering.ts as a pure
 	// step function, so the component owns exactly one timer: the step tells us
 	// when it next wants to be looked at.
-	let spinnerState = $state<SpinnerState>(IDLE_SPINNER);
-	let showSpinner = $derived(spinnerState.visible);
+	// The machine's state is a PLAIN variable, not `$state`, and that is the whole
+	// point. It used to be `$state` and the effect below both read and wrote it,
+	// so the effect re-triggered itself: every pass produced a fresh object (so it
+	// always counted as a change), and the effect's own cleanup cancelled the
+	// pending timer each time. The timer is what satisfies `minVisibleMs`, so once
+	// the badge was up it could never come down — it stayed on screen for the rest
+	// of the file. Shipped in 1.5.0/1.5.1; reported as "the buffering modal is
+	// permanently on" while playback was in fact fine.
+	//
+	// Only the boolean the template needs is reactive. The effect now tracks
+	// `spinnerBusy` alone, which is exactly the one input it should re-run for.
+	let spinnerMachine: SpinnerState = IDLE_SPINNER;
+	let spinnerVisible = $state(false);
+	let showSpinner = $derived(spinnerVisible);
 
 	$effect(() => {
 		// Read the dependency first so the effect tracks it.
 		const busy = spinnerBusy;
 		let timer: ReturnType<typeof setTimeout> | null = null;
 		const advance = () => {
-			const step = stepSpinner(spinnerState, busy, Date.now());
-			spinnerState = step.state;
+			const step = stepSpinner(spinnerMachine, busy, Date.now());
+			spinnerMachine = step.state;
+			spinnerVisible = step.state.visible;
 			if (step.recheckInMs != null) timer = setTimeout(advance, step.recheckInMs);
 		};
 		advance();

@@ -36,6 +36,17 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub struct ImmersiveState {
     pub saved_frame: Mutex<Option<(f64, f64, f64, f64)>>,
+    /// Whether immersive mode is on right now. `do_resize_mpv_macos` reads this:
+    /// while immersive, the video surface is snapped to the whole screen instead of
+    /// to the DOM's video-area rect. The rect is converted through
+    /// `contentLayoutRect`, which excludes the title bar's band — and the title bar
+    /// still occupies layout when immersive even though it is invisible, so the
+    /// page (and therefore the surface) starts below it. That left a ~28pt strip at
+    /// the top of the screen with no document and no surface behind it, and with a
+    /// transparent window that strip showed the DESKTOP. No CSS can reach it.
+    /// Letting mpv own the whole screen fills it with mpv's own black, which is
+    /// also what makes full screen feel like a cinema rather than a big window.
+    pub active: Mutex<bool>,
     /// Whether WE added `FullSizeContentView`. Tauri already sets it on a
     /// `transparent: true` window, and the webview's coordinate conversion in
     /// `do_resize_mpv_macos` depends on the resulting layout, so clearing a bit we
@@ -134,7 +145,9 @@ fn apply_immersive(app: &tauri::AppHandle, on: bool) -> Result<(), String> {
             }
         }
         win.setFrame_display(screen_frame, true);
+        *state.active.lock().map_err(|_| "active mutex poisoned")? = true;
     } else {
+        *state.active.lock().map_err(|_| "active mutex poisoned")? = false;
         ns_app.setPresentationOptions(NSApplicationPresentationOptions::empty());
         let added = {
             let mut f = state
