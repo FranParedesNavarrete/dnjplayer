@@ -102,10 +102,21 @@ export function computeIsLoading(state: {
 // many ms later it wants to be called again (null = nothing pending). The
 // component only has to own one setTimeout.
 
+// Raised from 300/400 after a user report on 1.5.0: over a Mega WebDAV stream the
+// badge appeared every few seconds, which is far more disruptive to watching than
+// the sub-second hiccups it was announcing. `paused-for-cache` goes true for a few
+// hundred milliseconds routinely on that transport, while the picture keeps
+// playing, so 300ms of grace reported normal operation as a problem.
+//
+// The bar for interrupting someone watching a film is "playback has visibly
+// stopped", not "the demuxer topped up". A stall the viewer cannot perceive must
+// stay invisible; 1.2s is past the point where a person notices the picture has
+// frozen and starts wondering whether the app died, which is the only thing this
+// indicator exists to answer.
 /** Delay before a stall becomes a visible spinner. */
-export const SPINNER_GRACE_MS = 300;
+export const SPINNER_GRACE_MS = 1200;
 /** Minimum time the spinner stays on screen once it has appeared. */
-export const SPINNER_MIN_VISIBLE_MS = 400;
+export const SPINNER_MIN_VISIBLE_MS = 700;
 
 export interface SpinnerTimings {
 	graceMs: number;

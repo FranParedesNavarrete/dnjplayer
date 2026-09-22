@@ -14,6 +14,8 @@
 	import { Play } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 	import { invoke } from '@tauri-apps/api/core';
+	import { getCurrentWindow } from '@tauri-apps/api/window';
+	import { log } from '$lib/log';
 
 	const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
 	const isMacOS = navigator.platform?.toLowerCase().includes('mac') ?? false;
@@ -121,6 +123,42 @@
 	$effect(() => {
 		if (!isMacOS) return;
 		document.documentElement.classList.toggle('video-hole', $playerActive);
+	});
+
+	// Safety net for the failure a user hit on 1.5.0: with the app in its own
+	// full screen, the green title-bar button put the window into a native
+	// full-screen Space. AppKit then re-orders child windows ABOVE their parent,
+	// so mpv's surface covered the whole webview and lost its synced geometry —
+	// no video, no controls — and on the way back out the window was left
+	// transparent over the desktop. `disable_native_fullscreen` in the Rust setup
+	// stops it happening at all; this catches any route that still gets there
+	// (a future macOS default, a menu shortcut, a restored window state) and
+	// backs out instead of leaving the app unusable. Deliberately not gated on
+	// the surface being attached: hiding the surface does NOT detach mpv's child
+	// window, so that signal would close the hole on return from another section
+	// and hide the video behind an opaque body.
+	$effect(() => {
+		if (!isMacOS || !$playerActive) return;
+		const win = getCurrentWindow();
+		let stop = false;
+		const check = async () => {
+			try {
+				if (!stop && (await win.isFullscreen())) {
+					log.warn('[player] native fullscreen detected; backing out (see CLAUDE.md #2)');
+					document.documentElement.classList.remove('video-hole');
+					await win.setFullscreen(false);
+					syncVideoSurface(true);
+				}
+			} catch (e) {
+				log.warn('[player] fullscreen check failed:', e);
+			}
+		};
+		void check();
+		const unlisten = win.onResized(() => void check());
+		return () => {
+			stop = true;
+			void unlisten.then((off: () => void) => off());
+		};
 	});
 
 	// When playback starts while this page is mounted (or is resumed after a

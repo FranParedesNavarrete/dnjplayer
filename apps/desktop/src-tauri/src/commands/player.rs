@@ -313,9 +313,78 @@ pub async fn resize_mpv_window(
     }
 }
 
+/// macOS: put our own icon back in the Dock.
+///
+/// libmpv's Cocoa backend calls `NSApplication.setApplicationIconImage` with mpv's
+/// own logo when it brings up its window. That property is per-PROCESS, not per
+/// window, so the Dock tile for dnjplayer turns into mpv's. Passing `None` clears
+/// the override and AppKit falls back to the icon in the bundle's Info.plist.
+///
+/// Called after the surface is attached and after every full-screen toggle, because
+/// mpv re-applies it whenever it rebuilds its window rather than only once.
+#[tauri::command]
+pub fn restore_app_icon(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        // AppKit, so main thread. Fire-and-forget: the Dock tile is cosmetic and
+        // never worth blocking a caller or failing a playback path over.
+        app.run_on_main_thread(|| {
+            use objc2_app_kit::NSApplication;
+            use objc2_foundation::MainThreadMarker;
+
+            if let Some(mtm) = MainThreadMarker::new() {
+                let ns_app = NSApplication::sharedApplication(mtm);
+                unsafe { ns_app.setApplicationIconImage(None) };
+            }
+        })
+        .map_err(|e| format!("Failed to dispatch to main thread: {}", e))?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+    Ok(())
+}
+
+/// macOS: take native full screen off the table.
+///
+/// The green title-bar button and View > Enter Full Screen move the window into a
+/// full-screen Space, and AppKit re-orders child windows ABOVE their parent when
+/// it does that. mpv's window is a child ordered BELOW (see `do_attach_mpv_macos`),
+/// so native full screen covers the entire webview with the video surface —
+/// controls included — and the surface also loses the geometry the webview had
+/// synced to it, which is why the picture goes missing rather than just covering
+/// the UI. Re-adding the child with `NSWindowOrderingMode::Below` after the
+/// transition does not stick; that was measured during the 2026-09-21 spike and is
+/// why the app's own full screen is borderless + maximised instead (see
+/// `toggleFullscreen` in player-service.ts).
+///
+/// Users reached the broken state by combining the two: app full screen first, then
+/// the green button. Clearing `FullScreenPrimary` and setting `FullScreenNone`
+/// makes the green button zoom the window instead and greys out the menu item.
+/// Zoom is compatible with the embedding, so neither control can reach the broken
+/// state any more, in either order.
+#[cfg(target_os = "macos")]
+pub fn disable_native_fullscreen(app: &tauri::AppHandle) -> Result<(), String> {
+    use objc2_app_kit::NSWindowCollectionBehavior;
+
+    let win = tauri_ns_window(app)?;
+    let mut behavior = win.collectionBehavior();
+    behavior.remove(NSWindowCollectionBehavior::FullScreenPrimary);
+    behavior.remove(NSWindowCollectionBehavior::FullScreenAuxiliary);
+    behavior.insert(NSWindowCollectionBehavior::FullScreenNone);
+    win.setCollectionBehavior(behavior);
+    Ok(())
+}
+
+/// No-op off macOS: there the mpv window is re-parented on top of the webview and
+/// native full screen is the right thing to use.
+#[cfg(not(target_os = "macos"))]
+pub fn disable_native_fullscreen(_app: &tauri::AppHandle) -> Result<(), String> {
+    Ok(())
+}
+
 /// Tauri's main NSWindow. Must be called on the main thread.
 #[cfg(target_os = "macos")]
-fn tauri_ns_window(app: &tauri::AppHandle) -> Result<objc2::rc::Retained<objc2_app_kit::NSWindow>, String> {
+pub(crate) fn tauri_ns_window(app: &tauri::AppHandle) -> Result<objc2::rc::Retained<objc2_app_kit::NSWindow>, String> {
     use tauri::Manager;
     use raw_window_handle::HasWindowHandle;
     use objc2_app_kit::NSView;

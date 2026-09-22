@@ -261,6 +261,8 @@ let initialized = false;
 // True once mpv's window has been hooked to the Tauri window (macOS/Windows)
 // and may be positioned. Cleared while the surface is hidden.
 let mpvWindowAttached = false;
+/** Rising-edge timestamp of the current `paused-for-cache` stall, if any. */
+let cacheStallStartedAt: number | null = null;
 
 // In-flight init, shared by concurrent callers. Without this, two overlapping
 // loadVideo() calls both see `initialized === false` and run init() twice, and
@@ -461,9 +463,22 @@ async function doInitPlayer(): Promise<void> {
 				case 'sid':
 					currentSid.set(parseTrackId(data));
 					break;
-				case 'paused-for-cache':
-					isBuffering.set(asFlag(data));
+				case 'paused-for-cache': {
+					// Log both edges with the duration between them. Whether the
+					// buffering badge is tuned right depends entirely on how long
+					// real stalls last on this transport, and that is not something
+					// to guess at from a screenshot: this turns it into a number in
+					// the log file the user can send.
+					const stalled = asFlag(data);
+					if (stalled && cacheStallStartedAt === null) {
+						cacheStallStartedAt = Date.now();
+					} else if (!stalled && cacheStallStartedAt !== null) {
+						log.info(`[player] cache stall lasted ${Date.now() - cacheStallStartedAt}ms`);
+						cacheStallStartedAt = null;
+					}
+					isBuffering.set(stalled);
 					break;
+				}
 				case 'core-idle':
 					coreIdle.set(asFlag(data));
 					break;
@@ -807,6 +822,10 @@ async function attachMpvWindow(): Promise<void> {
 
 			await invoke('attach_mpv_to_window', { mpvWindowPtr: windowId });
 			mpvWindowAttached = true;
+			// libmpv's Cocoa backend overwrites NSApp's icon with mpv's own when it
+			// creates its window, and that property is per-process: the Dock tile for
+			// dnjplayer becomes mpv's. Put ours back.
+			invoke('restore_app_icon').catch(() => {});
 			// Let Player.svelte push the current rect now that resizes are accepted.
 			mpvSurfaceReady.update((n) => n + 1);
 			log.debug('[player] mpv window attached as child, window-id:', windowId, `(attempt ${attempt})`);
@@ -1328,20 +1347,30 @@ export async function toggleFullscreen(): Promise<void> {
 		// move child windows into the fullscreen Space, but re-orders them ABOVE the
 		// parent, so the video covers the whole UI (verified in the spike; re-adding
 		// the child with NSWindowBelow after the transition doesn't stick either).
-		// Borderless + maximized keeps everything in the same Space and ordering.
-		if (entering) {
-			await win.setDecorations(false);
-			await win.maximize();
-		} else {
-			await win.unmaximize();
-			await win.setDecorations(true);
-		}
+		//
+		// This used to be `setDecorations(false)` + `maximize()`, which had two
+		// faults. It was not full screen — `maximize` uses the screen's
+		// *visibleFrame*, so the menu bar and the Dock stayed on top of the video —
+		// and toggling decorations on a `transparent: true` window leaves the title
+		// bar without its backing material on the way back, so the top strip of the
+		// window turned see-through and showed whatever application was behind
+		// dnjplayer. Both were reported on 1.5.0.
+		//
+		// commands::fullscreen does it natively instead: auto-hide the menu bar and
+		// Dock, size the window to the screen's full frame, and make the title bar
+		// invisible without touching the style mask's `Titled` bit. No Space
+		// transition, so the child-window ordering that puts the video under the UI
+		// survives, and no decoration toggle to corrupt the frame.
+		await invoke('set_immersive_fullscreen', { on: entering });
 	} else {
 		await win.setFullscreen(entering);
 	}
 	// Drives the layout: hides sidebar/chrome and fills the viewport so the video
 	// surface (which tracks the video area) covers the whole screen.
 	playerFullscreen.set(entering);
+	// mpv re-applies its own app icon whenever it rebuilds its window, which this
+	// transition can trigger, so claim the Dock tile back afterwards too.
+	invoke('restore_app_icon').catch(() => {});
 }
 
 /** Exit fullscreen if active (e.g. when leaving the player page). */

@@ -113,6 +113,7 @@ pub fn run() {
     ];
 
     tauri::Builder::default()
+        .manage(commands::fullscreen::ImmersiveState::default())
         .manage(MpvWindowState {
             hwnd: Mutex::new(None),
             mac_mpv_window: Mutex::new(None),
@@ -173,10 +174,18 @@ pub fn run() {
             commands::player::attach_mpv_to_window,
             commands::player::resize_mpv_window,
             commands::player::hide_mpv_window,
+            commands::player::restore_app_icon,
+            commands::fullscreen::set_immersive_fullscreen,
             commands::player::get_cursor_pos,
             commands::player::dev_smoke_play_path,
         ])
-        .setup(|_app| {
+        .setup(|app| {
+            // Must happen before the user can touch the title bar. Setup runs on
+            // the main thread, which is where AppKit requires this.
+            if let Err(e) = commands::player::disable_native_fullscreen(app.handle()) {
+                log::warn!("[player] could not disable native fullscreen: {}", e);
+            }
+
             // Start mega-cmd-server in background on app launch (non-blocking)
             std::thread::spawn(|| {
                 if mega::process::is_installed() {
