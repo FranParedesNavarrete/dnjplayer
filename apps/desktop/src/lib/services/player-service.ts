@@ -36,7 +36,8 @@ import {
 	isSeeking,
 	eofReached,
 	demuxerCacheTime,
-	demuxerCacheDuration
+	demuxerCacheDuration,
+	bufferedSeconds
 } from '$lib/stores/player';
 import { get } from 'svelte/store';
 import {
@@ -472,11 +473,18 @@ async function doInitPlayer(): Promise<void> {
 					const stalled = asFlag(data);
 					if (stalled && cacheStallStartedAt === null) {
 						cacheStallStartedAt = Date.now();
+						// How much was buffered when it ran dry. This is the number
+						// that says whether a stall is a supply problem (cushion never
+						// built: always ~0) or a hiccup the cushion should have
+						// absorbed, and it is what any further tuning has to be based
+						// on rather than on guesses about buffer sizes.
+						log.info(
+							`[player] cache stall started with ${get(bufferedSeconds).toFixed(1)}s buffered ahead`,
+						);
 						// BOTH edges. Logging only the falling one was a mistake: with a
 						// stuck badge the log could not tell "the cache never stalled"
 						// apart from "it stalled and never recovered", which is exactly
 						// the question that mattered.
-						log.info('[player] cache stall started');
 					} else if (!stalled && cacheStallStartedAt !== null) {
 						log.info(`[player] cache stall lasted ${Date.now() - cacheStallStartedAt}ms`);
 						cacheStallStartedAt = null;

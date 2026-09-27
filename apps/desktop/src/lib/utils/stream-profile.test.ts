@@ -51,9 +51,38 @@ describe('streamProfileFor', () => {
 		expect(Number(REMOTE_STREAM_OPTIONS['network-timeout'])).toBeGreaterThan(0);
 	});
 
-	it('keeps the byte caps in the documented range', () => {
-		// Nuvio's reference window is 150-512 MiB forward.
-		expect(REMOTE_STREAM_OPTIONS['demuxer-max-bytes']).toBe('256MiB');
-		expect(REMOTE_STREAM_OPTIONS['demuxer-max-back-bytes']).toBe('128MiB');
+	it('caps the remote readahead by TIME, with bytes as the memory ceiling', () => {
+		// This ordering is the point of the profile, not an accident of the
+		// numbers. Measured 2026-09-27: 256 MiB IS 4.6 minutes at the bitrate of
+		// the user's content, so a byte cap silently decides how many MINUTES of
+		// protection there are, and it decides differently for every file. The
+		// time value is the promise; the byte value only stops a high-bitrate
+		// file turning that promise into gigabytes of RAM.
+		expect(Number(REMOTE_STREAM_OPTIONS['cache-secs'])).toBe(1200);
+		expect(REMOTE_STREAM_OPTIONS['demuxer-max-bytes']).toBe('2GiB');
+		// The ceiling must be able to hold the promised minutes for ordinary
+		// 1080p (~1 MB/s), or it would bind first and the time value would be
+		// decorative — which is exactly the bug this profile was changed to fix.
+		const perSecond = 1.05 * 1024 * 1024; // generous 1080p anime bitrate
+		expect(2 * 1024 * 1024 * 1024).toBeGreaterThan(
+			Number(REMOTE_STREAM_OPTIONS['cache-secs']) * perSecond
+		);
+	});
+
+	it('spends less on the backward cache than on the forward one', () => {
+		// A back-seek inside the cached range is a convenience; a mid-playback
+		// stall is the failure this profile exists to prevent. The queue
+		// pre-open can also have two demuxers alive at once, so the backward
+		// cache is the one that gives way.
+		expect(REMOTE_STREAM_OPTIONS['demuxer-max-back-bytes']).toBe('64MiB');
+	});
+
+	it('waits for a real cushion before resuming from a stall', () => {
+		// mpv's default is 1 second, which turns one supply outage into a burst
+		// of five or six visible stalls as playback resumes and immediately runs
+		// dry again. Local files keep the default: one that runs dry has a real
+		// problem and waiting will not fix it.
+		expect(Number(REMOTE_STREAM_OPTIONS['cache-pause-wait'])).toBeGreaterThanOrEqual(15);
+		expect(Number(LOCAL_FILE_OPTIONS['cache-pause-wait'])).toBe(1);
 	});
 });
