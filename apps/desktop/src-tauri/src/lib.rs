@@ -189,7 +189,11 @@ pub fn run() {
             // Start mega-cmd-server in background on app launch (non-blocking)
             std::thread::spawn(|| {
                 if mega::process::is_installed() {
-                    let _ = mega::process::ensure_server();
+                    if mega::process::ensure_server().is_ok() {
+                        // Once per launch, not per command: reading the config is
+                        // a round trip to the server, and the values persist.
+                        mega::process::apply_cache_budget();
+                    }
                 }
             });
             Ok(())
