@@ -9,8 +9,25 @@ export async function megaEnsureServer(): Promise<void> {
 	return invoke('mega_ensure_server');
 }
 
-export async function megaLogin(email: string, password: string): Promise<string> {
-	return invoke('mega_login', { email, password });
+/** Outcome of a login attempt. `twoFactorRequired` is not a failure. */
+export interface LoginOutcome {
+	twoFactorRequired: boolean;
+}
+
+/**
+ * Log in, optionally with a multifactor code.
+ *
+ * Whether the account has MFA on cannot be asked first — MEGA does not tell
+ * anyone holding only an email address — so the flow is: try, and if the
+ * backend reports `twoFactorRequired`, collect a code and call this again with
+ * the SAME email and password plus `authCode`.
+ */
+export async function megaLogin(
+	email: string,
+	password: string,
+	authCode?: string
+): Promise<LoginOutcome> {
+	return invoke('mega_login', { email, password, authCode: authCode ?? null });
 }
 
 export async function megaLogout(): Promise<string> {

@@ -26,6 +26,12 @@ export const es: Record<string, string> = {
 	'auth.connecting': 'Conectando...',
 	'auth.required': 'El correo y la contrasena son obligatorios',
 	'auth.megacmdNote': 'Requiere MEGAcmd instalado en tu sistema.',
+	'auth.twoFactorTitle': 'Verificacion en dos pasos',
+	'auth.twoFactorHint': 'Abre tu aplicacion de autenticacion e introduce el codigo de 6 digitos de esta cuenta.',
+	'auth.twoFactorVerify': 'Verificar',
+	'auth.twoFactorVerifying': 'Verificando...',
+	'auth.twoFactorBack': 'Usar otra cuenta',
+	'auth.twoFactorIncomplete': 'Introduce los 6 digitos',
 
 	// Explorador de archivos
 	'browser.cloudDrive': 'Nube',

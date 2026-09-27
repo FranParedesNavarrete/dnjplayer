@@ -80,11 +80,88 @@ pub async fn mega_server_generation() -> Result<u64, String> {
     Ok(process::server_generation())
 }
 
+/// Result of a login attempt. `two_factor_required` is not an error: it means the
+/// credentials were accepted far enough for MEGA to ask for the account's
+/// multifactor code, and the UI should now collect one.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginOutcome {
+    pub two_factor_required: bool,
+}
+
+/// MEGA's multifactor codes are 6-digit TOTP (`--auth-code=XXXXXX` in
+/// `mega-exec login --help`).
+const AUTH_CODE_LEN: usize = 6;
+
+/// Validate the code before it reaches the command line.
+///
+/// Not politeness: the value is interpolated into an argument, so anything that
+/// is not plainly six digits has no business being passed through. Rejecting it
+/// here also gives the user a better message than MEGAcmd's.
+fn clean_auth_code(code: &str) -> Result<String, String> {
+    // The UI splits the code across six boxes and browsers like to paste with
+    // spaces; those are the user's formatting, not their input.
+    let digits: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+    if digits.len() == AUTH_CODE_LEN && digits.chars().all(|c| c.is_ascii_digit()) {
+        Ok(digits)
+    } else {
+        Err(format!(
+            "The authentication code must be {} digits",
+            AUTH_CODE_LEN
+        ))
+    }
+}
+
+/// Log in, optionally with a multifactor code.
+///
+/// Whether the account HAS multifactor enabled cannot be asked beforehand: MEGA
+/// deliberately does not expose that to anyone holding only an email address. So
+/// this attempts the login, and if MEGAcmd asks for a code
+/// (`ExecError::Prompted`) it reports that back instead of blocking on a stdin
+/// nobody writes to — which is what made this time out after 60s once the user
+/// turned MFA on.
 #[tauri::command]
-pub async fn mega_login(email: String, password: String) -> Result<String, String> {
+pub async fn mega_login(
+    email: String,
+    password: String,
+    auth_code: Option<String>,
+) -> Result<LoginOutcome, String> {
     // Ensure server is running before login
     process::ensure_server()?;
-    client::exec(&["login", &email, &password])
+
+    let code = match auth_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        Some(raw) => Some(clean_auth_code(raw)?),
+        None => None,
+    };
+
+    // `login [--auth-code=XXXXXX] email password` — the flag comes first.
+    let flag;
+    let mut args: Vec<&str> = vec!["login"];
+    if let Some(code) = &code {
+        flag = format!("--auth-code={}", code);
+        args.push(&flag);
+    }
+    args.push(&email);
+    args.push(&password);
+
+    match client::exec_guarding_prompts(&args) {
+        Ok(_) => Ok(LoginOutcome {
+            two_factor_required: false,
+        }),
+        Err(client::ExecError::Prompted) => {
+            if code.is_some() {
+                // We supplied a code and it is asking again: the code was wrong
+                // or has expired. Saying so beats bouncing the user around the
+                // same screen with no explanation.
+                Err("That authentication code was not accepted. Check your authenticator app and try again.".to_string())
+            } else {
+                Ok(LoginOutcome {
+                    two_factor_required: true,
+                })
+            }
+        }
+        Err(client::ExecError::Failed(msg)) => Err(msg),
+    }
 }
 
 #[tauri::command]
@@ -600,5 +677,47 @@ INSHARE on //from/other@mail.com:Movies HD (full access)
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "//from/friend@mail.com:Anime/Naruto");
         assert_eq!(entries[0].name, "Naruto");
+    }
+}
+
+#[cfg(test)]
+mod auth_code_tests {
+    use super::clean_auth_code;
+
+    #[test]
+    fn accepts_six_digits() {
+        assert_eq!(clean_auth_code("123456").unwrap(), "123456");
+    }
+
+    #[test]
+    fn strips_whitespace_from_a_paste() {
+        // Authenticator apps render codes as "123 456" and that is what gets
+        // copied; the spaces are presentation, not input.
+        assert_eq!(clean_auth_code("123 456").unwrap(), "123456");
+        assert_eq!(clean_auth_code(" 123456\n").unwrap(), "123456");
+    }
+
+    #[test]
+    fn rejects_wrong_length() {
+        assert!(clean_auth_code("12345").is_err());
+        assert!(clean_auth_code("1234567").is_err());
+        assert!(clean_auth_code("").is_err());
+    }
+
+    #[test]
+    fn rejects_non_digits() {
+        // The value is interpolated into a command-line argument, so anything
+        // that is not plainly a digit must not get through.
+        assert!(clean_auth_code("12345a").is_err());
+        assert!(clean_auth_code("--foo=").is_err());
+        assert!(clean_auth_code("12;rm").is_err());
+    }
+
+    #[test]
+    fn error_message_carries_no_input() {
+        // The code is short-lived but it is still a credential: it must not be
+        // echoed back into a string that reaches the UI or the log.
+        let err = clean_auth_code("hunter2!").unwrap_err();
+        assert!(!err.contains("hunter2"));
     }
 }

@@ -26,6 +26,12 @@ export const en: Record<string, string> = {
 	'auth.connecting': 'Connecting...',
 	'auth.required': 'Email and password are required',
 	'auth.megacmdNote': 'Requires MEGAcmd installed on your system.',
+	'auth.twoFactorTitle': 'Two-factor authentication',
+	'auth.twoFactorHint': 'Open your authenticator app and enter the 6-digit code for this account.',
+	'auth.twoFactorVerify': 'Verify',
+	'auth.twoFactorVerifying': 'Verifying...',
+	'auth.twoFactorBack': 'Use a different account',
+	'auth.twoFactorIncomplete': 'Enter all 6 digits',
 
 	// File Browser
 	'browser.cloudDrive': 'Cloud Drive',

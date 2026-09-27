@@ -1,13 +1,42 @@
 <script lang="ts">
 	import { megaLogin, megaCheckStatus } from '$lib/services/mega-service';
 	import { isConnected, userEmail, megaError } from '$lib/stores/mega';
-	import { Lock } from 'lucide-svelte';
+	import { Lock, ShieldCheck } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
+
+	/** MEGA uses standard 6-digit TOTP (`--auth-code=XXXXXX` in MEGAcmd). */
+	const CODE_LENGTH = 6;
 
 	let email = $state('');
 	let password = $state('');
 	let loading = $state(false);
 	let errorMsg = $state('');
+
+	// Whether the account has multifactor enabled cannot be asked up front: MEGA
+	// does not tell anyone holding only an email address. So the form asks for
+	// credentials, and moves to this step only if the backend reports that
+	// MEGAcmd asked for a code.
+	let step = $state<'credentials' | 'code'>('credentials');
+	let digits = $state<string[]>(Array(CODE_LENGTH).fill(''));
+	let boxes: HTMLInputElement[] = [];
+	let code = $derived(digits.join(''));
+
+	async function finishLogin() {
+		const status = await megaCheckStatus();
+		isConnected.set(status.logged_in);
+		userEmail.set(status.email);
+		megaError.set(null);
+		// The password is only held for as long as the two-step flow needs it.
+		password = '';
+		digits = Array(CODE_LENGTH).fill('');
+		step = 'credentials';
+	}
+
+	function reportError(e: unknown) {
+		const msg = e instanceof Error ? e.message : String(e);
+		errorMsg = msg;
+		megaError.set(msg);
+	}
 
 	async function handleLogin() {
 		if (!email || !password) {
@@ -17,19 +46,91 @@
 		loading = true;
 		errorMsg = '';
 		try {
-			await megaLogin(email, password);
-			const status = await megaCheckStatus();
-			isConnected.set(status.logged_in);
-			userEmail.set(status.email);
-			megaError.set(null);
-			password = '';
+			const outcome = await megaLogin(email, password);
+			if (outcome.twoFactorRequired) {
+				step = 'code';
+				// Wait for the boxes to exist before reaching for one.
+				queueMicrotask(() => boxes[0]?.focus());
+				return;
+			}
+			await finishLogin();
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
-			errorMsg = msg;
-			megaError.set(msg);
+			reportError(e);
 		} finally {
 			loading = false;
 		}
+	}
+
+	async function submitCode() {
+		if (code.length < CODE_LENGTH) {
+			errorMsg = $t['auth.twoFactorIncomplete'];
+			return;
+		}
+		loading = true;
+		errorMsg = '';
+		try {
+			// Same credentials, now with the code: MEGAcmd takes all three at once.
+			await megaLogin(email, password, code);
+			await finishLogin();
+		} catch (e) {
+			reportError(e);
+			// A rejected code is the common case here, and re-typing over six
+			// half-filled boxes is worse than starting clean.
+			digits = Array(CODE_LENGTH).fill('');
+			queueMicrotask(() => boxes[0]?.focus());
+		} finally {
+			loading = false;
+		}
+	}
+
+	function backToCredentials() {
+		step = 'credentials';
+		digits = Array(CODE_LENGTH).fill('');
+		errorMsg = '';
+		password = '';
+	}
+
+	function handleDigitInput(index: number, e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		// Take the LAST character typed: typing into a full box should replace it
+		// rather than be ignored.
+		const digit = input.value.replace(/\D/g, '').slice(-1);
+		digits[index] = digit;
+		input.value = digit;
+		if (digit && index < CODE_LENGTH - 1) boxes[index + 1]?.focus();
+		if (digit && index === CODE_LENGTH - 1 && digits.every(Boolean)) void submitCode();
+	}
+
+	function handleDigitKeydown(index: number, e: KeyboardEvent) {
+		if (e.key === 'Backspace' && !digits[index] && index > 0) {
+			// Empty box: step back and clear the one behind, which is what every
+			// code field does and what the hand expects.
+			e.preventDefault();
+			digits[index - 1] = '';
+			boxes[index - 1]?.focus();
+		} else if (e.key === 'ArrowLeft' && index > 0) {
+			e.preventDefault();
+			boxes[index - 1]?.focus();
+		} else if (e.key === 'ArrowRight' && index < CODE_LENGTH - 1) {
+			e.preventDefault();
+			boxes[index + 1]?.focus();
+		} else if (e.key === 'Enter') {
+			void submitCode();
+		}
+	}
+
+	function handleDigitPaste(e: ClipboardEvent) {
+		// Authenticator apps copy as "123456" or "123 456"; either should just work
+		// instead of landing six characters in the first box.
+		const pasted = (e.clipboardData?.getData('text') ?? '').replace(/\D/g, '');
+		if (!pasted) return;
+		e.preventDefault();
+		const next = Array(CODE_LENGTH).fill('');
+		for (let i = 0; i < Math.min(pasted.length, CODE_LENGTH); i++) next[i] = pasted[i];
+		digits = next;
+		const lastFilled = Math.min(pasted.length, CODE_LENGTH) - 1;
+		boxes[lastFilled]?.focus();
+		if (next.every(Boolean)) void submitCode();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -40,52 +141,90 @@
 <div class="auth-form">
 	<div class="auth-header">
 		<div class="auth-icon">
-			<Lock size={40} strokeWidth={1.4} />
+			{#if step === 'code'}
+				<ShieldCheck size={40} strokeWidth={1.4} />
+			{:else}
+				<Lock size={40} strokeWidth={1.4} />
+			{/if}
 		</div>
-		<h3>{$t['auth.title']}</h3>
-		<p>{$t['auth.subtitle']}</p>
+		<h3>{step === 'code' ? $t['auth.twoFactorTitle'] : $t['auth.title']}</h3>
+		<p>{step === 'code' ? $t['auth.twoFactorHint'] : $t['auth.subtitle']}</p>
 	</div>
 
 	{#if errorMsg}
 		<div class="error-banner">{errorMsg}</div>
 	{/if}
 
-	<div class="form-fields">
-		<div class="field">
-			<label for="mega-email">{$t['auth.email']}</label>
-			<input
-				id="mega-email"
-				type="email"
-				bind:value={email}
-				placeholder="your@email.com"
-				disabled={loading}
-				onkeydown={handleKeydown}
-			/>
+	{#if step === 'code'}
+		<!-- One input per digit. `inputmode="numeric"` so a touch keyboard comes up
+		     as a keypad, and paste is handled on the group rather than per box. -->
+		<div class="code-boxes" onpaste={handleDigitPaste}>
+			{#each digits as digit, i (i)}
+				<input
+					bind:this={boxes[i]}
+					class="code-box"
+					type="text"
+					inputmode="numeric"
+					autocomplete="one-time-code"
+					maxlength="1"
+					value={digit}
+					aria-label={`${$t['auth.twoFactorTitle']} ${i + 1}/${digits.length}`}
+					disabled={loading}
+					oninput={(e) => handleDigitInput(i, e)}
+					onkeydown={(e) => handleDigitKeydown(i, e)}
+				/>
+			{/each}
 		</div>
-		<div class="field">
-			<label for="mega-password">{$t['auth.password']}</label>
-			<input
-				id="mega-password"
-				type="password"
-				bind:value={password}
-				placeholder={$t['auth.password']}
-				disabled={loading}
-				onkeydown={handleKeydown}
-			/>
+
+		<button class="btn-primary" onclick={submitCode} disabled={loading}>
+			{#if loading}
+				{$t['auth.twoFactorVerifying']}
+			{:else}
+				{$t['auth.twoFactorVerify']}
+			{/if}
+		</button>
+
+		<button class="btn-link" onclick={backToCredentials} disabled={loading}>
+			{$t['auth.twoFactorBack']}
+		</button>
+	{:else}
+		<div class="form-fields">
+			<div class="field">
+				<label for="mega-email">{$t['auth.email']}</label>
+				<input
+					id="mega-email"
+					type="email"
+					bind:value={email}
+					placeholder="your@email.com"
+					disabled={loading}
+					onkeydown={handleKeydown}
+				/>
+			</div>
+			<div class="field">
+				<label for="mega-password">{$t['auth.password']}</label>
+				<input
+					id="mega-password"
+					type="password"
+					bind:value={password}
+					placeholder={$t['auth.password']}
+					disabled={loading}
+					onkeydown={handleKeydown}
+				/>
+			</div>
 		</div>
-	</div>
 
-	<button class="btn-primary" onclick={handleLogin} disabled={loading}>
-		{#if loading}
-			{$t['auth.connecting']}
-		{:else}
-			{$t['auth.signIn']}
-		{/if}
-	</button>
+		<button class="btn-primary" onclick={handleLogin} disabled={loading}>
+			{#if loading}
+				{$t['auth.connecting']}
+			{:else}
+				{$t['auth.signIn']}
+			{/if}
+		</button>
 
-	<p class="auth-note">
-		{$t['auth.megacmdNote']}
-	</p>
+		<p class="auth-note">
+			{$t['auth.megacmdNote']}
+		</p>
+	{/if}
 </div>
 
 <style>
@@ -187,6 +326,56 @@
 	}
 
 	.btn-primary:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.code-boxes {
+		display: flex;
+		gap: 8px;
+		margin-bottom: 20px;
+	}
+
+	.code-box {
+		width: 44px;
+		height: 54px;
+		text-align: center;
+		font-size: 1.4rem;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		color: var(--text-primary);
+		font-family: inherit;
+		outline: none;
+		transition: border-color 0.15s;
+	}
+
+	.code-box:focus {
+		border-color: var(--accent);
+	}
+
+	.code-box:disabled {
+		opacity: 0.6;
+	}
+
+	.btn-link {
+		margin-top: 14px;
+		background: none;
+		border: none;
+		color: var(--text-secondary);
+		font-size: 0.8rem;
+		font-family: inherit;
+		cursor: pointer;
+		text-decoration: underline;
+	}
+
+	.btn-link:hover:not(:disabled) {
+		color: var(--text-primary);
+	}
+
+	.btn-link:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
 	}
