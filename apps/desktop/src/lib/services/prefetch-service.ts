@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import { playlist } from '$lib/stores/player-ui';
-import { megaGetWebdavUrl } from '$lib/services/mega-service';
+import { megaGetWebdavUrl, megaServerGeneration } from '$lib/services/mega-service';
 import { log } from '$lib/log';
 import type { PlaylistItem } from '$lib/types/player';
 
@@ -15,6 +15,18 @@ import type { PlaylistItem } from '$lib/types/player';
  * The cache is IN-MEMORY only: WebDAV URLs are served by the MEGAcmd server on
  * port 4443 and only stay valid while that server runs. Persisting them across
  * app restarts would yield dead URLs.
+ *
+ * Within a single app run the same problem exists in miniature: if MEGAcmd
+ * restarts (crash, user quit, machine sleep), every URL already in the cache
+ * points at a server that no longer exists, and mpv opens it into a black
+ * screen. The Rust side therefore hands out a generation token that is bumped
+ * whenever the server is observed to come back up (mega/process.rs); the cache
+ * checks it before every hit and wipes itself when it changes. It is a cheap
+ * atomic read, not a MEGAcmd round trip.
+ *
+ * That covers "the server went away and came back". It cannot cover a server
+ * that is replaced between two of our observations without ever looking down,
+ * so player-service.ts also re-resolves once when mpv reports a load error.
  *
  * Local items need none of this: their path IS the playable URL, so resolution
  * is instantaneous and there is nothing to cache or prefetch.
@@ -33,12 +45,61 @@ const PREFETCH_AHEAD = 3;
 // sequential batch aborts as soon as it notices the token changed.
 let prefetchGeneration = 0;
 
+// Generation token of the mega-cmd-server instance the cached URLs belong to.
+// null = nothing cached yet / not asked yet.
+let cachedServerGeneration: number | null = null;
+
+// Bumped by every cache invalidation — a server restart, a targeted invalidate(),
+// or a full clear. A resolution that was ALREADY IN FLIGHT when the cache was
+// wiped must not write its (now dead) URL back in afterwards, which is exactly
+// what happened: invalidateOnServerRestart() cleared `urlCache` but not
+// `inFlight`, and the pending promise's `.then` re-inserted its URL a moment
+// later. Worse, resolvePlayableUrl() consults `inFlight` right after the cache,
+// so callers were handed that dead promise directly — including the
+// "retry with a fresh URL" path, which would retry with the same dead URL.
+//
+// Same token pattern as `loadGeneration` in player-service.ts: each resolution
+// remembers the generation it started under and stays quiet if it has moved on.
+let cacheGeneration = 0;
+
+/**
+ * Drop every cached URL if the MEGAcmd server has restarted since they were
+ * resolved. Best-effort: if the token can't be read (command missing, IPC
+ * hiccup) we keep the cache rather than throwing away working URLs — the
+ * re-resolve-on-error path in player-service.ts is the backstop.
+ */
+async function invalidateOnServerRestart(): Promise<void> {
+	let generation: number;
+	try {
+		generation = await megaServerGeneration();
+	} catch (e) {
+		log.warn('[prefetch] Could not read the MEGAcmd server generation:', e);
+		return;
+	}
+
+	if (cachedServerGeneration !== null && generation !== cachedServerGeneration) {
+		log.info(
+			`[prefetch] MEGAcmd restarted (generation ${cachedServerGeneration} -> ${generation}); dropping ${urlCache.size} cached WebDAV URL(s) and ${inFlight.size} in-flight resolution(s)`
+		);
+		urlCache.clear();
+		// In-flight resolutions may have been issued against the server that just
+		// died, so they are dropped too and their results refused by the token
+		// check below. A caller awaiting one still gets its value (the promise is
+		// not cancellable) — it simply never becomes a cache entry, and the next
+		// caller resolves afresh against the server that is actually running.
+		inFlight.clear();
+		cacheGeneration++;
+	}
+	cachedServerGeneration = generation;
+}
+
 /**
  * Resolve a playlist item to a URL/path that mpv can open.
  *
  * - `local`: returns `item.path` verbatim and immediately. mpv opens local files
  *   directly, so there is no resolution step, no cache and no prefetch involved.
- * - `mega`: resolves the MEGAcmd WebDAV URL, using the in-memory cache first.
+ * - `mega`: resolves the MEGAcmd WebDAV URL, using the in-memory cache first
+ *   (after checking the cache is still valid for the running server).
  *   Concurrent calls for the same path share a single resolution.
  */
 export async function resolvePlayableUrl(item: PlaylistItem): Promise<string> {
@@ -46,15 +107,22 @@ export async function resolvePlayableUrl(item: PlaylistItem): Promise<string> {
 
 	// Cache key for a Mega item is its remote path.
 	const remotePath = item.path;
+	await invalidateOnServerRestart();
 	const cached = urlCache.get(remotePath);
 	if (cached) return cached;
 
 	const pending = inFlight.get(remotePath);
 	if (pending) return pending;
 
+	const startedAt = cacheGeneration;
 	const promise = megaGetWebdavUrl(remotePath)
 		.then((url) => {
-			urlCache.set(remotePath, url);
+			// Only cache it if nothing invalidated the cache while we were resolving.
+			if (startedAt === cacheGeneration) {
+				urlCache.set(remotePath, url);
+			} else {
+				log.debug(`[prefetch] Discarding a stale resolution for ${remotePath}`);
+			}
 			return url;
 		})
 		.catch((e) => {
@@ -63,7 +131,9 @@ export async function resolvePlayableUrl(item: PlaylistItem): Promise<string> {
 			throw e;
 		})
 		.finally(() => {
-			inFlight.delete(remotePath);
+			// Only withdraw OUR entry: an invalidation may already have cleared the
+			// map and a newer resolution for the same path may be registered there.
+			if (inFlight.get(remotePath) === promise) inFlight.delete(remotePath);
 		});
 
 	inFlight.set(remotePath, promise);
@@ -109,14 +179,24 @@ export function prefetchAround(currentIndex: number): void {
 /**
  * Drop a single cached entry (on prefetch failure or item removal).
  * Takes the cache key, i.e. the Mega remote path. Harmless no-op for local paths.
+ *
+ * Drops the in-flight resolution too, and bumps the generation so that
+ * resolution cannot write its result back in. Without that, "retry with a fresh
+ * URL" could be handed the very URL it had just invalidated.
  */
 export function invalidate(remotePath: string): void {
 	urlCache.delete(remotePath);
+	inFlight.delete(remotePath);
+	cacheGeneration++;
 }
 
 /** Clear the entire cache and cancel any in-progress prefetch batch. */
 export function clearPrefetchCache(): void {
 	prefetchGeneration++;
+	cacheGeneration++;
 	urlCache.clear();
 	inFlight.clear();
+	// Keep `cachedServerGeneration`: it describes which server we last talked to,
+	// not what is in the cache, and forgetting it would skip the first restart
+	// check after every queue change.
 }

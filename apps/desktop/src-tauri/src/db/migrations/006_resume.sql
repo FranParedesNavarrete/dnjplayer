@@ -1,0 +1,21 @@
+-- Resume position for `watched_files`.
+--
+-- The schema has pretended to have this since 001 (`library.playback_position`),
+-- but `library` was never populated and `update_playback_position` is a TODO
+-- stub. The real, populated table is `watched_files`, so the columns go here.
+--
+-- ALTER TABLE ... ADD COLUMN is non-destructive and instant in SQLite: existing
+-- rows get NULL, which reads as "no resume point", i.e. play from the start.
+--
+-- Keys follow the source-namespaced convention of `watched_files.mega_path`
+-- (local paths prefixed with `file://`, Mega paths bare) -- see
+-- src/lib/utils/source-key.ts. Nothing here parses the key; it is opaque.
+--
+-- position_seconds: last playback position in seconds. NULL / absent means
+--   "start from the beginning". Only written inside the 1s..90% window (see
+--   src/lib/utils/resume.ts); outside it the row is reset to NULL instead.
+-- duration_seconds: the file's duration as mpv reported it when the position
+--   was stored. Used to clamp a stale position and to re-derive the watched
+--   fraction without re-opening the file.
+ALTER TABLE watched_files ADD COLUMN position_seconds REAL;
+ALTER TABLE watched_files ADD COLUMN duration_seconds REAL;

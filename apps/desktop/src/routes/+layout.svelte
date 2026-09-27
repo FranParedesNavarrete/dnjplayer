@@ -6,9 +6,12 @@
 	import { theme } from '$lib/stores/theme';
 	import { megaCheckStatus } from '$lib/services/mega-service';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
+	import { invoke } from '@tauri-apps/api/core';
 	import { t } from '$lib/i18n';
 	import { checkForUpdates } from '$lib/services/update-service';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
+	import ToastHost from '$lib/components/ToastHost.svelte';
 	import { Clock, CloudDownload, HardDrive, Zap, Settings, Play, Sun, Moon, PanelLeftClose, PanelLeftOpen } from 'lucide-svelte';
 
 	let { children } = $props();
@@ -36,6 +39,17 @@
 		setTimeout(() => {
 			checkForUpdates(true).catch(() => {});
 		}, 3000);
+
+		// Dev smoke harness: jump straight to the player page, which then loads
+		// the DNJ_SMOKE_PLAY file (see routes/player/+page.svelte). No-op unless
+		// the env var is set; the command returns null in release builds.
+		if (import.meta.env.DEV) {
+			invoke<string | null>('dev_smoke_play_path')
+				.then((path) => {
+					if (path) goto('/player');
+				})
+				.catch(() => {});
+		}
 	});
 
 	function toggleSidebar() {
@@ -56,6 +70,18 @@
 <svelte:head>
 	<title>dnjplayer</title>
 </svelte:head>
+
+<!-- App-wide toasts. Mounted OUTSIDE `.app-shell`, not inside it: `position: fixed`
+     does not rescue an element whose ancestor is `display: none`, and
+     `.app-shell.fullscreen .sidebar` hides its whole subtree — which is exactly the
+     state where the only toast we raise (a playback failure) matters most. -->
+<ToastHost />
+
+<!-- Same reasoning as the toasts above: the update pill is `position: fixed`, so
+     mounting it inside `.app-shell` bought nothing and risked it being hidden by
+     an ancestor that the layout turns off. It used to be a bar in the page flow
+     inside `.content`, which is why it lived there. -->
+<UpdateBanner />
 
 <div class="app-shell" class:fullscreen={$playerFullscreen}>
 	<nav class="sidebar" class:collapsed={collapsed}>
@@ -110,8 +136,10 @@
 			</div>
 		</div>
 	</nav>
-	<main class="content">
-		<UpdateBanner />
+	<main class="content" class:flush={$page.url.pathname === '/player'}>
+		<!-- Positioned + z-index so the banner paints ABOVE the video-hole backdrop
+		     (`.video-area`'s box-shadow in Player.svelte), which is painted from a
+		     positioned ancestor later in tree order and would otherwise cover it. -->
 		{@render children()}
 	</main>
 </div>
@@ -292,6 +320,21 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: var(--page-pad);
+	}
+
+	/* The player page is edge to edge: it draws its own chrome OVER the video, so
+	   page padding only creates a frame around it. That frame is not merely ugly —
+	   while `html.video-hole` is active every ancestor is transparent, so the
+	   padding band is a see-through hole onto whatever is behind the window. */
+	.content.flush {
+		padding: 0;
+	}
+
+	/* macOS video hole (see app.css): the shell must not paint under the video.
+	   The sidebar keeps its own background, the content area is repainted by the
+	   player's backdrop shadow. */
+	:global(html.video-hole) .app-shell {
+		background: transparent;
 	}
 
 	/* Immersive fullscreen: hide sidebar/chrome so the player fills the screen. */

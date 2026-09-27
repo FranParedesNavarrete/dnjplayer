@@ -26,6 +26,12 @@ export const en: Record<string, string> = {
 	'auth.connecting': 'Connecting...',
 	'auth.required': 'Email and password are required',
 	'auth.megacmdNote': 'Requires MEGAcmd installed on your system.',
+	'auth.twoFactorTitle': 'Two-factor authentication',
+	'auth.twoFactorHint': 'Open your authenticator app and enter the 6-digit code for this account.',
+	'auth.twoFactorVerify': 'Verify',
+	'auth.twoFactorVerifying': 'Verifying...',
+	'auth.twoFactorBack': 'Use a different account',
+	'auth.twoFactorIncomplete': 'Enter all 6 digits',
 
 	// File Browser
 	'browser.cloudDrive': 'Cloud Drive',
@@ -87,6 +93,21 @@ export const en: Record<string, string> = {
 	'player.loadSubtitles': 'Load subtitle file…',
 	'player.trackUnnamed': 'Track {n}',
 	'player.noTracks': 'No alternative tracks available',
+	'player.back': 'Back',
+	'player.close': 'Close',
+	'player.seek': 'Timeline',
+	'player.volume': 'Volume',
+	'player.speed': 'Playback speed',
+	'player.speedHint': 'Hold Space for 2x while it lasts',
+	'player.subtitleDelay': 'Subtitle delay (G/H)',
+	'player.buffering': 'Buffering…',
+	'player.error.loadFailed': 'Could not play this video',
+	'player.error.detail': 'Details',
+	'player.error.streamExpired': 'The stream expired; reconnecting…',
+
+	// Notifications (ToastHost)
+	'notify.dismiss': 'Dismiss',
+	'notify.hideDetails': 'Hide details',
 
 	// Queue page
 	'queue.title': 'Queue',
@@ -160,6 +181,8 @@ export const en: Record<string, string> = {
 	'player.osd.shaderB': 'Anime4K: Type B (720p)',
 	'player.osd.shaderC': 'Anime4K: Type C (480p)',
 	'player.osd.shaderOff': 'Anime4K: Clear',
+	'player.osd.subDelay': 'Subtitle delay: {value} ms',
+	'player.osd.speedBoost': 'Speed {value}x',
 
 	// Updates
 	'update.available': 'Update available: v{version}',

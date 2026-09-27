@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # macOS is the only platform where the app is validated locally, and the
+    # Tauri toolchain is preinstalled there. Windows/Linux are validated by hand.
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - name: Type-check (svelte-check)
+        run: pnpm check
+
+      - name: Frontend unit tests (vitest)
+        run: pnpm test
+
+      # `tauri::generate_context!()` embeds `frontendDist` (../build) at compile
+      # time and fails if the directory is missing, so the frontend has to be
+      # built before any cargo step. libmpv itself is dlopen'ed at runtime and
+      # is not needed here.
+      - name: Build frontend
+        run: pnpm build
+
+      - name: cargo check
+        run: cargo check --locked
+        working-directory: apps/desktop/src-tauri
+
+      - name: cargo test
+        run: cargo test --locked
+        working-directory: apps/desktop/src-tauri

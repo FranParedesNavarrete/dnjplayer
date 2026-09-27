@@ -26,3 +26,41 @@ pub fn format_size(bytes_str: &str) -> String {
         Err(_) => bytes_str.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bytes_below_one_kib_are_plain() {
+        assert_eq!(format_size_bytes(0), "0 B");
+        assert_eq!(format_size_bytes(1), "1 B");
+        assert_eq!(format_size_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn kib_has_no_decimals() {
+        assert_eq!(format_size_bytes(1024), "1 KB");
+        assert_eq!(format_size_bytes(1_400), "1 KB");
+        assert_eq!(format_size_bytes(700 * 1024), "700 KB");
+    }
+
+    #[test]
+    fn mib_and_gib_have_one_decimal() {
+        assert_eq!(format_size_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_size_bytes(350 * 1024 * 1024 + 512 * 1024), "350.5 MB");
+        assert_eq!(format_size_bytes(1024 * 1024 * 1024), "1.0 GB");
+        assert_eq!(format_size_bytes(1_503_238_554), "1.4 GB");
+    }
+
+    #[test]
+    fn megacmd_size_token_is_parsed_or_passed_through() {
+        assert_eq!(format_size("2048"), "2 KB");
+        assert_eq!(format_size("1073741824"), "1.0 GB");
+        // Folders print "-" in `ls -l`; anything non-numeric is left alone.
+        assert_eq!(format_size("-"), "-");
+        assert_eq!(format_size(""), "");
+        assert_eq!(format_size("12abc"), "12abc");
+        assert_eq!(format_size("-5"), "-5");
+    }
+}

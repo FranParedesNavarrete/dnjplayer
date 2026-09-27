@@ -88,6 +88,18 @@ body {
 	-webkit-user-select: none;
 }
 
+/* macOS video hole. While a video is playing, mpv's window is a child window
+   BELOW the (transparent) Tauri window. Every ancestor of `.video-area` must stop
+   painting a background under it, otherwise the video is hidden behind the UI
+   colour. Player.svelte toggles this class on <html>; the surroundings are
+   repainted by `.video-area`'s box-shadow (see Player.svelte) and by the sidebar
+   and layout shell (see +layout.svelte). Not used on Windows/Linux. */
+html.video-hole body {
+	/* !important: app.html sets `style="background:#0d1117"` inline on <body> for
+	   the pre-mount loading screen, and an inline style beats every normal rule. */
+	background: transparent !important;
+}
+
 a {
 	color: var(--accent);
 	text-decoration: none;

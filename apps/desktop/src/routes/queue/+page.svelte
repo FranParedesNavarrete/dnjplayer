@@ -8,7 +8,7 @@
 		invalidate,
 		clearPrefetchCache
 	} from '$lib/services/prefetch-service';
-	import { loadVideo } from '$lib/services/player-service';
+	import { loadVideo, cancelPreopen } from '$lib/services/player-service';
 	import { setProperty } from 'tauri-plugin-libmpv-api';
 	import { markWatched, toDbKey } from '$lib/services/db-service';
 	import { log } from '$lib/log';
@@ -42,6 +42,11 @@
 
 		const removed = items[index];
 		if (removed) invalidate(removed.path);
+		// The player may already have handed the item AFTER the current one to mpv
+		// for pre-opening (see utils/preopen.ts). Any edit here can change which
+		// item that is — or delete it — so drop mpv's copy and let the player
+		// re-arm from the new queue. Playback of the current item is unaffected.
+		void cancelPreopen();
 
 		items.splice(index, 1);
 		playlist.set(items);
@@ -59,6 +64,7 @@
 		playlist.set([]);
 		playlistIndex.set(0);
 		clearPrefetchCache();
+		void cancelPreopen();
 	}
 </script>
 

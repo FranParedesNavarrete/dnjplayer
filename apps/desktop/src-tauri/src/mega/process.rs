@@ -1,9 +1,69 @@
 use super::client;
 use crate::util::command::hidden_command;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-/// Check if mega-cmd-server is running and responsive
+/// Monotonic "which mega-cmd-server instance are we talking to" counter.
+///
+/// WHY: every WebDAV URL MEGAcmd hands out (`http://127.0.0.1:4443/<token>/file`)
+/// dies with the server that minted it. The frontend caches those URLs in memory
+/// forever, so after a server restart mpv opens a dead URL and the user gets a
+/// black screen. There is no MEGAcmd API that exposes a server identity, so we
+/// derive one: every time we *observe* the server go from down to up, the token
+/// is bumped and the frontend drops its whole URL cache.
+///
+/// Starts "down" on purpose: the first successful observation after app start
+/// bumps it to 1, which is harmless because the cache is empty then anyway.
+struct ServerGeneration {
+    generation: AtomicU64,
+    was_down: AtomicBool,
+}
+
+impl ServerGeneration {
+    const fn new() -> Self {
+        Self {
+            generation: AtomicU64::new(0),
+            was_down: AtomicBool::new(true),
+        }
+    }
+
+    /// Feed in one observation of the server's liveness. Returns the current
+    /// generation. Only the down -> up edge bumps it: a server that simply keeps
+    /// running must never invalidate URLs that are still good.
+    fn observe(&self, running: bool) -> u64 {
+        if running {
+            if self.was_down.swap(false, Ordering::SeqCst) {
+                return self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            }
+        } else {
+            self.was_down.store(true, Ordering::SeqCst);
+        }
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    fn get(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+}
+
+static SERVER_GENERATION: ServerGeneration = ServerGeneration::new();
+
+/// Current server generation. A cheap atomic read: it never spawns a process, so
+/// the frontend can call it before every cached-URL hit without paying for a
+/// `mega-exec version` round trip.
+pub fn server_generation() -> u64 {
+    SERVER_GENERATION.get()
+}
+
+/// Check if mega-cmd-server is running and responsive.
+///
+/// Doubles as the sampling point for [`server_generation`]: every liveness check
+/// anywhere in the app (status polling, `ensure_server`, login...) feeds the
+/// generation, so a restart is noticed even when *we* were not the ones who
+/// restarted it.
 pub fn is_server_running() -> bool {
-    client::exec(&["version"]).is_ok()
+    let running = client::version().is_ok();
+    SERVER_GENERATION.observe(running);
+    running
 }
 
 /// Check if MEGAcmd is installed on the system
@@ -93,4 +153,48 @@ pub fn ensure_server() -> Result<(), String> {
 /// Check if user is logged in
 pub fn is_logged_in() -> bool {
     client::exec(&["whoami"]).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ServerGeneration;
+
+    // A local instance per test: the real one is a process-wide static, and
+    // tests in the same binary run concurrently.
+    #[test]
+    fn first_live_observation_bumps_from_the_unknown_state() {
+        let gen = ServerGeneration::new();
+        assert_eq!(gen.get(), 0);
+        assert_eq!(gen.observe(true), 1);
+    }
+
+    #[test]
+    fn a_server_that_keeps_running_never_invalidates_urls() {
+        let gen = ServerGeneration::new();
+        gen.observe(true);
+        for _ in 0..10 {
+            assert_eq!(gen.observe(true), 1);
+        }
+    }
+
+    #[test]
+    fn each_down_up_cycle_bumps_exactly_once() {
+        let gen = ServerGeneration::new();
+        assert_eq!(gen.observe(true), 1);
+        // Several consecutive "down" samples are still a single outage.
+        gen.observe(false);
+        gen.observe(false);
+        assert_eq!(gen.observe(true), 2);
+        gen.observe(false);
+        assert_eq!(gen.observe(true), 3);
+        assert_eq!(gen.get(), 3);
+    }
+
+    #[test]
+    fn a_down_observation_alone_does_not_bump() {
+        let gen = ServerGeneration::new();
+        gen.observe(true);
+        assert_eq!(gen.observe(false), 1);
+        assert_eq!(gen.get(), 1);
+    }
 }
