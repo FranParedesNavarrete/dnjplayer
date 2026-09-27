@@ -77,6 +77,12 @@
      state where the only toast we raise (a playback failure) matters most. -->
 <ToastHost />
 
+<!-- Same reasoning as the toasts above: the update pill is `position: fixed`, so
+     mounting it inside `.app-shell` bought nothing and risked it being hidden by
+     an ancestor that the layout turns off. It used to be a bar in the page flow
+     inside `.content`, which is why it lived there. -->
+<UpdateBanner />
+
 <div class="app-shell" class:fullscreen={$playerFullscreen}>
 	<nav class="sidebar" class:collapsed={collapsed}>
 		<div class="sidebar-header">
@@ -134,7 +140,6 @@
 		<!-- Positioned + z-index so the banner paints ABOVE the video-hole backdrop
 		     (`.video-area`'s box-shadow in Player.svelte), which is painted from a
 		     positioned ancestor later in tree order and would otherwise cover it. -->
-		<div class="banner-slot"><UpdateBanner /></div>
 		{@render children()}
 	</main>
 </div>
@@ -323,11 +328,6 @@
 	   padding band is a see-through hole onto whatever is behind the window. */
 	.content.flush {
 		padding: 0;
-	}
-
-	.banner-slot {
-		position: relative;
-		z-index: 1;
 	}
 
 	/* macOS video hole (see app.css): the shell must not paint under the video.
