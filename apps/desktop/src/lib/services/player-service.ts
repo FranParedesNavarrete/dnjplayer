@@ -294,7 +294,14 @@ let loadGeneration = 0;
 // ("I barely started" and "I finished it"). The seek is also visible and
 // undoable: the position is on the timeline and a single seek-to-0 undoes it.
 
-const POSITION_SAVE_INTERVAL_MS = 60_000;
+// 15s, not 60s. The position is also written on pause/stop/EOF, so this timer
+// only covers the case where the app dies without any of those — and it does:
+// libmpv 0.41.0 crashes in its CoreAudio hotplug callback when the output device
+// changes (see CLAUDE.md #4), which a user hit mid-episode by moving from
+// Bluetooth to the built-in speakers. We cannot stop that crash from here, but a
+// SQLite upsert every 15s is free and turns "lost the last minute" into "lost the
+// last few seconds".
+const POSITION_SAVE_INTERVAL_MS = 15_000;
 
 /** DB row key + display name of the item currently loaded, or null. */
 let currentResumeTarget: { key: string; name: string } | null = null;
