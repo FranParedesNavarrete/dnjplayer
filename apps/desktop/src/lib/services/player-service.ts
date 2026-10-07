@@ -1307,12 +1307,20 @@ function getShaderFiles(mode: ShaderMode, variant: ShaderVariant): string[] {
 	return pipeline.map((s) => s.replace(/\{V\}/g, variant));
 }
 
-async function getShaderDir(): Promise<string> {
+/**
+ * Absolute path of the shader directory, or null if it cannot be found.
+ *
+ * Resolved by Rust (`shader_dir`), which is the only side that knows the real
+ * location in both a packaged bundle and a dev run, and which verifies the
+ * directory exists. See that command for why the previous
+ * `resolveResource('shaders')` was wrong in both modes.
+ */
+async function getShaderDir(): Promise<string | null> {
 	try {
-		return await resolveResource('shaders');
-	} catch {
-		// In dev mode, shaders are in the static directory served by Vite
-		return 'shaders';
+		return await invoke<string>('shader_dir');
+	} catch (e) {
+		log.error('[player] Anime4K shaders unavailable:', e);
+		return null;
 	}
 }
 
@@ -1331,6 +1339,16 @@ export async function loadShaderPreset(mode: ShaderMode, variant: ShaderVariant,
 	if (shaders.length === 0) return;
 
 	const shaderDir = await getShaderDir();
+	if (!shaderDir) {
+		// Never claim success here again. mpv accepts `glsl-shaders` paths it
+		// cannot open and only complains at render time, so a bad path used to
+		// produce a cheerful "shaders loaded" line and no upscaling whatsoever.
+		notify('error', get(t)['player.shadersMissing'], {
+			detail: 'shader_dir could not locate the bundled Anime4K .glsl files.',
+		});
+		activeShaderMode.set('off');
+		return;
+	}
 	log.info(`[player] Loading Anime4K shaders: mode=${mode}, variant=${variant}, dir=${shaderDir}`);
 
 	// Set all shaders in a single property update — no pause/resume needed.

@@ -313,6 +313,53 @@ pub async fn resize_mpv_window(
     }
 }
 
+/// Absolute path of the bundled Anime4K shader directory.
+///
+/// Resolved here rather than in the frontend because Rust is the only side that
+/// knows where the files actually are in BOTH modes, and because this is the only
+/// place that can cheaply check they exist.
+///
+/// It had been `resolveResource('shaders')`, which was wrong in both:
+///   - packaged: `bundle.resources` listed `../static/shaders/**/*`, and Tauri
+///     escapes a path that climbs out of the project root, so the files land in
+///     `Resources/_up_/static/shaders/` while that call returns
+///     `Resources/shaders`;
+///   - dev: the fallback was the relative string `"shaders"`, which mpv resolved
+///     against its working directory — `src-tauri/target/debug/shaders`.
+/// Neither path existed, and `setProperty('glsl-shaders', …)` accepts paths it
+/// never opens, so mpv only failed later at render time while the app logged
+/// "Anime4K shaders loaded". The feature was silently dead in every build, which
+/// is exactly how a user came to notice that disabling Anime4K changed nothing at
+/// all about performance.
+///
+/// Returning `Err` when nothing is found is the point: the caller surfaces it
+/// instead of pretending.
+#[tauri::command]
+pub fn shader_dir(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+
+    let mut tried: Vec<String> = Vec::new();
+
+    // Packaged: `bundle.resources` maps the shaders to `Resources/shaders`.
+    if let Ok(resources) = app.path().resource_dir() {
+        let candidate = resources.join("shaders");
+        if candidate.is_dir() {
+            return Ok(candidate.to_string_lossy().into_owned());
+        }
+        tried.push(candidate.to_string_lossy().into_owned());
+    }
+
+    // Dev: no bundle, but the repo is right there. Baked in at compile time, so
+    // it simply fails over in a release build where it does not exist.
+    let dev = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../static/shaders");
+    if dev.is_dir() {
+        return Ok(dev.to_string_lossy().into_owned());
+    }
+    tried.push(dev.to_string_lossy().into_owned());
+
+    Err(format!("Anime4K shaders not found. Tried: {}", tried.join(", ")))
+}
+
 /// macOS: put our own icon back in the Dock.
 ///
 /// libmpv's Cocoa backend calls `NSApplication.setApplicationIconImage` with mpv's

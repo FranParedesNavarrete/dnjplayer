@@ -175,6 +175,7 @@ pub fn run() {
             commands::player::resize_mpv_window,
             commands::player::hide_mpv_window,
             commands::player::restore_app_icon,
+            commands::player::shader_dir,
             commands::fullscreen::set_immersive_fullscreen,
             commands::player::get_cursor_pos,
             commands::player::dev_smoke_play_path,
