@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { brightness, contrast, saturation } from '$lib/stores/player';
+	import { brightness, contrast, saturation, gamma } from '$lib/stores/player';
 	import { setVideoAdjustment, resetVideoAdjustments } from '$lib/services/player-service';
 	import { t } from '$lib/i18n';
 
 	// Image adjustments are cheap mpv property writes (no demuxer work), so these
 	// can stay live on `oninput` — unlike seeking, which is committed on release.
-	function apply(property: 'brightness' | 'contrast' | 'saturation', e: Event) {
+	function apply(property: 'brightness' | 'contrast' | 'saturation' | 'gamma', e: Event) {
 		const value = parseInt((e.target as HTMLInputElement).value, 10);
 		setVideoAdjustment(property, value);
 	}
@@ -47,6 +47,18 @@
 			oninput={(e) => apply('saturation', e)}
 		/>
 		<span class="value">{$saturation}</span>
+	</div>
+	<div class="row">
+		<span class="label">{$t['player.gamma']}</span>
+		<input
+			type="range"
+			min="-100"
+			max="100"
+			step="1"
+			value={$gamma}
+			oninput={(e) => apply('gamma', e)}
+		/>
+		<span class="value">{$gamma}</span>
 	</div>
 	<button class="panel-action" onclick={() => resetVideoAdjustments()}>{$t['player.reset']}</button>
 </div>

@@ -82,6 +82,8 @@ export const es: Record<string, string> = {
 	'player.adjustments': 'Ajustes de video',
 	'player.brightness': 'Brillo',
 	'player.contrast': 'Contraste',
+	'player.gamma': 'Gamma',
+	'player.shadersMissing': 'No se encontraron los shaders de Anime4K. El reescalado queda desactivado.',
 	'player.saturation': 'Saturacion',
 	'player.reset': 'Restablecer',
 	'player.next': 'Siguiente (N)',

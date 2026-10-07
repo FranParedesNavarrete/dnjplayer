@@ -220,6 +220,31 @@
 		pokeUiActivity();
 	}
 
+	/**
+	 * Close an open panel when the pointer goes down anywhere else.
+	 *
+	 * On `pointerdown` rather than `click`, so the panel is gone before whatever
+	 * was clicked reacts — a `click` listener would fire after the video had
+	 * already been toggled underneath it.
+	 *
+	 * The panel's own toggle buttons are skipped via `data-panel-toggle`:
+	 * `pointerdown` runs BEFORE `click`, so without that exclusion pressing the
+	 * button would close the panel here and `togglePanel` would immediately
+	 * reopen it, making the button unable to close anything.
+	 *
+	 * macOS only in practice. On Windows the native mpv window is composited on
+	 * top of the webview and swallows pointer events over the video
+	 * (CLAUDE.md #2), so a click on the picture never reaches the DOM — which is
+	 * also why the panels are inline rather than floating there.
+	 */
+	function handleOutsidePointerDown(e: PointerEvent) {
+		if (panel === 'none') return;
+		const target = e.target as Element | null;
+		if (!target?.closest) return;
+		if (target.closest('.panel') || target.closest('[data-panel-toggle]')) return;
+		panel = 'none';
+	}
+
 	// --- Optimistic play/pause ----------------------------------------------
 
 	// Nuvio (`controls.js:2327-2348`): paint the new state immediately, then fall
@@ -539,7 +564,12 @@
 	}
 </script>
 
-<svelte:window onkeydown={handleKeydown} onkeyup={handleKeyup} onblur={handleWindowBlur} />
+<svelte:window
+	onkeydown={handleKeydown}
+	onkeyup={handleKeyup}
+	onblur={handleWindowBlur}
+	onpointerdown={handleOutsidePointerDown}
+/>
 
 <!-- Buffering indicator, centred on the video. Deliberately a SIBLING of
      `.player-overlay` and not a child: the chrome hides by setting `opacity: 0`
@@ -704,6 +734,7 @@
 					class="icon-btn"
 					class:active={panel === 'speed'}
 					onclick={() => togglePanel('speed')}
+					data-panel-toggle
 					aria-label={$t['player.speed']} data-tip={$t['player.speed']}
 				>
 					<Gauge size={18} strokeWidth={2} />
@@ -717,6 +748,7 @@
 						class="icon-btn"
 						class:active={panel === 'tracks'}
 						onclick={() => togglePanel('tracks')}
+					data-panel-toggle
 						aria-label={$t['player.tracks']} data-tip={$t['player.tracks']}
 					>
 						<Captions size={18} strokeWidth={2} />
@@ -727,6 +759,7 @@
 					class="icon-btn"
 					class:active={panel === 'video'}
 					onclick={() => togglePanel('video')}
+					data-panel-toggle
 					aria-label={$t['player.adjustments']} data-tip={$t['player.adjustments']}
 				>
 					<SlidersHorizontal size={18} strokeWidth={2} />

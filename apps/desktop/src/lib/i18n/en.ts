@@ -82,6 +82,8 @@ export const en: Record<string, string> = {
 	'player.adjustments': 'Video adjustments',
 	'player.brightness': 'Brightness',
 	'player.contrast': 'Contrast',
+	'player.gamma': 'Gamma',
+	'player.shadersMissing': 'The Anime4K shaders could not be found. Upscaling is disabled.',
 	'player.saturation': 'Saturation',
 	'player.reset': 'Reset',
 	'player.next': 'Next (N)',

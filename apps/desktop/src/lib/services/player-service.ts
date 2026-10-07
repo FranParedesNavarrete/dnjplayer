@@ -154,6 +154,24 @@ const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
  * - `video-sync=display-resample` (default: `audio`). Removes the periodic
  *   judder of 23.976 fps content on a 60 Hz panel by resampling audio to the
  *   real display clock instead of dropping/duplicating frames.
+ *
+ *   KEPT after a power investigation (2026-10-07) that first concluded it should
+ *   go, then found its own evidence invalid. Recorded so nobody repeats either
+ *   half. A user reported playback battery life falling from ~4h to ~1h30 after
+ *   the 1.5.0 player rework. Standalone `mpv` runs with our option set made this
+ *   look like the single cause (33.6% CPU without it, 48.2% with, 51.5% for the
+ *   full set). It does not hold: measured inside the app itself, at the same
+ *   window and with the same file, CPU was 20.4% without it and 20.7% with — and
+ *   Anime4K UL on or off was 20.4% vs 21.3%, i.e. also nothing. Every option in
+ *   this profile is within noise of every other at the app level.
+ *
+ *   So a standalone mpv process is NOT a model of this app: it lacks the real
+ *   window, the transparent-webview compositing over mpv's surface and the rest
+ *   of the process. Measure the app, not mpv. The regression is real but it is
+ *   not in these options, and finding it needs GPU/package power figures
+ *   (`powermetrics`, which needs root, or Activity Monitor's Energy tab) rather
+ *   than process CPU.
+ *
  * - `volume-max=150` (default: `130`). The volume slider in the UI goes to 150,
  *   so today its top 13% silently does nothing. This makes the slider honest.
  *   mpv accepts 100..1000; 150 matches the UI exactly rather than inventing
