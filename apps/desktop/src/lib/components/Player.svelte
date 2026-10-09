@@ -9,7 +9,10 @@
 		mpvSurfaceReady,
 		chromeOverVideo,
 	} from '$lib/stores/player-ui';
-	import { osdMessage } from '$lib/stores/player';
+	import { osdMessage,
+	videoWidth,
+	videoHeight
+} from '$lib/stores/player';
 	import PlayerOverlay from './PlayerOverlay.svelte';
 	import { Play } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
@@ -106,6 +109,20 @@
 	function handleScroll() {
 		syncVideoSurface();
 	}
+
+	// Re-sync when the VIDEO's dimensions change, i.e. on every file whose
+	// resolution differs from the last. `auto-window-resize=no` stops mpv
+	// resizing its own window on that event (see RENDER_OPTIONS), and this is the
+	// safety net: mpv still sizes the window when it first creates it, and any
+	// future route that moves the surface behind our back would otherwise leave
+	// part of the transparent hole with nothing behind it — which shows the
+	// desktop, not the video.
+	$effect(() => {
+		$videoWidth;
+		$videoHeight;
+		const timer = setTimeout(() => syncVideoSurface(true), 50);
+		return () => clearTimeout(timer);
+	});
 
 	// Re-sync after entering/exiting fullscreen. The window resizes and the layout
 	// changes; the ResizeObserver catches the size change, but the native

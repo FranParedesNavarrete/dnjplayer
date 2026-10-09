@@ -172,6 +172,16 @@ const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
  *   (`powermetrics`, which needs root, or Activity Monitor's Energy tab) rather
  *   than process CPU.
  *
+ * - `auto-window-resize=no` (default: `yes`). mpv resizes its OWN window to the
+ *   video's dimensions whenever the resolution changes, and on macOS that window
+ *   is the video surface we position ourselves to match `.video-area`
+ *   (CLAUDE.md #2). Left on, loading a file of a different resolution shrank or
+ *   grew the surface behind our back: with `video-hole` active every ancestor is
+ *   transparent, so wherever the surface no longer covered the hole the window
+ *   showed straight through to the desktop. Reported as "small or large content
+ *   makes transparent patches, and only toggling fullscreen fixes it" — toggling
+ *   fixed it because that forces a geometry re-sync. mpv must not own this
+ *   window's size; we do.
  * - `volume-max=150` (default: `130`). The volume slider in the UI goes to 150,
  *   so today its top 13% silently does nothing. This makes the slider honest.
  *   mpv accepts 100..1000; 150 matches the UI exactly rather than inventing
@@ -187,6 +197,7 @@ const RENDER_OPTIONS = {
 	'cscale': 'spline36',
 	'deband': 'yes',
 	'video-sync': 'display-resample',
+	'auto-window-resize': 'no',
 	'volume-max': 150,
 } as const;
 
